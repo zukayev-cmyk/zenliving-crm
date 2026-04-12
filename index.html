@@ -357,7 +357,9 @@ tr:last-child td{border-bottom:none}
         <button class="tnb on" id="tnb-clients" onclick="goPage('clients')">Clients</button>
         <button class="tnb" id="tnb-quote" onclick="goPage('quote')" style="display:none">Quote</button>
         <button class="tnb" id="tnb-jobs"    onclick="goPage('jobs')">Jobs</button>
-        <button class="tnb" id="tnb-cal"     onclick="goPage('cal')">Calendar</button>
+        <button class="tnb" id="tnb-cal"       onclick="goPage('cal')">Calendar</button>
+        <button class="tnb" id="tnb-completed" onclick="goPage('completed')">Completed</button>
+        <button class="tnb" id="tnb-archive"   onclick="goPage('archive')">Archive</button>
       </div>
     </div>
     <div style="display:flex;align-items:center;gap:10px">
@@ -454,6 +456,52 @@ tr:last-child td{border-bottom:none}
     </div>
   </div>
 
+  <!-- ── COMPLETED ── -->
+  <div class="page" id="page-completed">
+    <div class="pw">
+      <div class="ph"><div><div class="pt">Completed Jobs</div><div class="ps" id="completedSub"></div></div></div>
+      <div class="kpi-row" id="completedKPIs"></div>
+      <div class="jobs-list" id="completedList"></div>
+    </div>
+  </div>
+
+  <!-- ── ARCHIVE ── -->
+  <div class="page" id="page-archive">
+    <div class="pw">
+      <div class="ph"><div><div class="pt">Archive</div><div class="ps" id="archiveSub"></div></div></div>
+      <div class="kpi-row" id="archiveKPIs"></div>
+      <div class="clients-list" id="archiveList"></div>
+    </div>
+  </div>
+
+  <!-- ── LOSS REASON MODAL ── -->
+  <div class="modal-bg" id="lossModal" onclick="if(event.target===this)closeLossModal()">
+    <div class="modal" onclick="event.stopPropagation()" style="max-width:380px">
+      <div class="modal-title">Mark as Lost</div>
+      <div class="modal-sub" id="lossClientName"></div>
+      <div class="f-group" style="margin-top:16px">
+        <div class="f-label">Reason</div>
+        <select class="fi" id="lossReason">
+          <option value="price">Too expensive — price</option>
+          <option value="no-response">No response — went silent</option>
+          <option value="competitor">Chose another company</option>
+          <option value="cancelled">Project cancelled / not going ahead</option>
+          <option value="timeline">Timeline didn't work</option>
+          <option value="area">Out of our area</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+      <div class="f-group">
+        <div class="f-label">Note (optional)</div>
+        <input class="fi" id="lossNote" placeholder="Any additional context…">
+      </div>
+      <div class="modal-footer">
+        <button class="btn" onclick="closeLossModal()">Cancel</button>
+        <button class="btn danger" onclick="confirmLoss()">Mark as Lost</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ── CALENDAR ── -->
   <div class="page" id="page-cal">
     <div class="pw">
@@ -501,9 +549,12 @@ tr:last-child td{border-bottom:none}
       <div class="f-group"><div class="f-label">Location / area</div><input class="fi" id="m-location" placeholder="e.g. Dublin 4"></div>
     </div>
     <div class="f-group"><div class="f-label">Status</div>
-      <select class="fi" id="m-status">
-        <option value="new">New lead</option><option value="warm">Warm — quote sent</option>
-        <option value="negotiating">Negotiating</option><option value="won">Won</option>
+      <select class="fi" id="m-status" onchange="onStatusChange(this)">
+        <option value="new">New lead</option>
+        <option value="warm">Warm — quote sent</option>
+        <option value="negotiating">Negotiating</option>
+        <option value="won">Won</option>
+        <option value="lost">Lost</option>
       </select></div>
     <div class="modal-footer">
       <button class="btn" onclick="closeClientModal()">Cancel</button>
@@ -741,9 +792,11 @@ function goPage(p) {
   document.querySelectorAll('.tnb').forEach(e=>e.classList.remove('on'));
   $('page-'+p).classList.add('on');
   const nb=$('tnb-'+p); if(nb) nb.classList.add('on');
-  if(p==='clients') renderClients();
-  if(p==='jobs')    renderJobs();
-  if(p==='cal')     renderCal();
+  if(p==='clients')   renderClients();
+  if(p==='jobs')      renderJobs();
+  if(p==='cal')       renderCal();
+  if(p==='completed') renderCompleted();
+  if(p==='archive')   renderArchive();
 }
 
 // ═══════════════════════════════════════════════════════
@@ -778,9 +831,19 @@ async function loadAll() {
   }
   
   // Filter for non-admin users
+  // Jobs are matched by either their stored handler OR their linked client's current handler
+  // This means if Diana's client is reassigned to Huan, Huan sees it immediately
   if (currentUser !== 'arthur') {
-    clients = clients.filter(c => (c.handler||'').toLowerCase() === currentUser || (c.createdBy||'').toLowerCase() === currentUser);
-    jobs = jobs.filter(j => (j.handler||'').toLowerCase() === currentUser);
+    clients = clients.filter(c =>
+      (c.handler||'').toLowerCase() === currentUser ||
+      (c.createdBy||'').toLowerCase() === currentUser
+    );
+    jobs = jobs.filter(j => {
+      if ((j.handler||'').toLowerCase() === currentUser) return true;
+      // Also check the linked client's current handler
+      const linkedClient = clients.find(c => c.id === j.clientId);
+      return linkedClient && (linkedClient.handler||'').toLowerCase() === currentUser;
+    });
   }
   
   goPage('clients');
@@ -795,15 +858,17 @@ function renderClients() {
     ? `All clients — ${clients.length} total`
     : `Your clients — ${clients.length} shown`;
 
-  const withQuote  = clients.filter(c=>c._quoteVal>0).length;
-  const totalPipe  = clients.reduce((s,c)=>s+(c._quoteVal||0),0);
-  const won        = clients.filter(c=>c.status==='won').length;
+  const active     = clients.filter(c=>c.status!=='lost');
+  const totalPipe  = active.reduce((s,c)=>s+(c._quoteVal||0),0);
+  const won        = active.filter(c=>c.status==='won').length;
+  const lostCount  = clients.filter(c=>c.status==='lost').length;
 
   setEl('clientKPIs',`
-    <div class="kpi"><div class="kv">${clients.length}</div><div class="kl">Total clients</div></div>
-    <div class="kpi"><div class="kv">${clients.filter(c=>c.status!=='won').length}</div><div class="kl">Active pipeline</div></div>
+    <div class="kpi"><div class="kv">${active.length}</div><div class="kl">Active clients</div></div>
+    <div class="kpi"><div class="kv">${active.filter(c=>c.status!=='won').length}</div><div class="kl">Pipeline</div></div>
     <div class="kpi"><div class="kv">${euros(totalPipe)}</div><div class="kl">Pipeline value</div></div>
     <div class="kpi"><div class="kv">${won}</div><div class="kl">Won</div></div>
+    ${lostCount?`<div class="kpi" onclick="goPage('archive')" style="cursor:pointer;opacity:.6"><div class="kv">${lostCount}</div><div class="kl">Archived →</div></div>`:''}
   `);
 
   if(!clients.length) {
@@ -815,7 +880,8 @@ function renderClients() {
     return;
   }
 
-  setEl('clientsList', clients.map(c=>{
+  const activeClients = clients.filter(c => c.status !== 'lost');
+  setEl('clientsList', activeClients.map(c=>{
     const handler = USERS[c.handler?.toLowerCase()]||{name:c.handler||'—'};
     const jobForClient = jobs.find(j=>j.clientId===c.id);
     const hasActiveJob = jobForClient && jobForClient.p1?.paid;
@@ -846,7 +912,7 @@ function renderClients() {
         </div>
         <div class="c-footer">
           <button class="btn sm" onclick="editClient('${c.id}')">Edit details</button>
-          <button class="btn sm danger" onclick="deleteClient('${c.id}')">Delete</button>
+          <button class="btn sm danger" onclick="openLossModal('${c.id}')">Mark lost</button>
           <button class="btn sm primary" onclick="openQuote('${c.id}')">
             ${c._quoteVal?'Edit quote →':'Create quote →'}
           </button>
@@ -883,8 +949,9 @@ function closeClientModal() { $('clientModal').classList.remove('on'); }
 
 async function saveClient() {
   const name=val('m-name'); if(!name){alert('Client name required.');return;}
+  const newHandler = val('m-handler');
   const client = {
-    id: editingClientId||uid(), name, handler:val('m-handler'),
+    id: editingClientId||uid(), name, handler:newHandler,
     phone:val('m-phone'), email:val('m-email'), address:val('m-address'),
     eircode:val('m-eircode'), location:val('m-location'), status:val('m-status'),
     createdBy:currentUser, createdAt:new Date().toISOString(),
@@ -893,11 +960,22 @@ async function saveClient() {
   if(editingClientId) {
     const i=clients.findIndex(x=>x.id===editingClientId);
     if(i>=0) clients[i]={...clients[i],...client};
+    // If handler changed, sync to the linked job immediately
+    const linkedJob = jobs.find(j=>j.clientId===editingClientId);
+    if(linkedJob && (linkedJob.handler||'').toLowerCase() !== newHandler.toLowerCase()) {
+      linkedJob.handler = newHandler;
+      await api('saveJob',{},{job:linkedJob});
+    }
   } else {
     clients.push(client);
   }
   closeClientModal();
   renderClients();
+}
+
+// When status dropdown changes in edit modal — show/hide loss reason
+function onStatusChange(sel) {
+  // No extra UI needed — loss reason captured via dedicated modal
 }
 
 async function deleteClient(id) {
@@ -1388,6 +1466,177 @@ function exportPDF(){
   win.document.close();
 }
 
+
+// ═══════════════════════════════════════════════════════
+// LOSS MODAL
+// ═══════════════════════════════════════════════════════
+let losingClientId = null;
+
+function openLossModal(clientId) {
+  const c = clients.find(x=>x.id===clientId);
+  if(!c) return;
+  losingClientId = clientId;
+  $('lossClientName').textContent = c.name;
+  $('lossReason').value = 'price';
+  $('lossNote').value = '';
+  $('lossModal').classList.add('on');
+}
+
+function closeLossModal() {
+  $('lossModal').classList.remove('on');
+  losingClientId = null;
+}
+
+async function confirmLoss() {
+  if(!losingClientId) return;
+  const c = clients.find(x=>x.id===losingClientId);
+  if(!c) return;
+  const reason = $('lossReason').value;
+  const note = $('lossNote').value.trim();
+  c.status = 'lost';
+  c._lossReason = reason;
+  c._lossNote = note;
+  c._lostAt = new Date().toISOString();
+  await api('saveClient', {}, {client: c});
+  closeLossModal();
+  renderClients();
+}
+
+// ═══════════════════════════════════════════════════════
+// COMPLETED PAGE
+// ═══════════════════════════════════════════════════════
+function renderCompleted() {
+  // A job is "completed" when all 3 payments paid AND review touchpoint sent
+  const completedJobs = jobs.filter(j =>
+    j.p1?.paid && j.p2?.paid && j.p3?.paid && j.touchpoints?.review?.done
+  );
+  // Also include manually archived jobs with status=complete
+  const manualComplete = jobs.filter(j => j.status === 'complete' && !completedJobs.find(x=>x.id===j.id));
+  const allDone = [...completedJobs, ...manualComplete];
+
+  $('completedSub').textContent = `${allDone.length} completed job${allDone.length!==1?'s':''}`;
+
+  const totalRev = allDone.reduce((s,j)=>s+(j.value||0),0);
+  setEl('completedKPIs',`
+    <div class="kpi"><div class="kv">${allDone.length}</div><div class="kl">Jobs completed</div></div>
+    <div class="kpi"><div class="kv">${euros(totalRev)}</div><div class="kl">Total revenue</div></div>
+  `);
+
+  if(!allDone.length) {
+    setEl('completedList',`<div style="text-align:center;padding:48px;color:var(--ink3)">
+      <div style="font-size:28px;margin-bottom:10px;opacity:.3">✓</div>
+      <div style="font-size:13px">No completed jobs yet.</div>
+      <div style="font-size:11px;color:var(--ink4);margin-top:6px">Jobs appear here once all payments are collected and a review has been sent.</div>
+    </div>`);
+    return;
+  }
+
+  setEl('completedList', allDone.map(j => {
+    const c = clients.find(x=>x.id===j.clientId);
+    const completedDate = j.p3?.paidDate || j.touchpoints?.review?.doneDate || '—';
+    return `<div class="j-card">
+      <div class="j-top">
+        <div class="j-av" style="background:rgba(122,106,170,.15);color:#b0a0e0">${inits(j.clientName)}</div>
+        <div class="j-main">
+          <div class="j-name">${j.clientName}</div>
+          <div class="j-meta">${j.location||'—'} · ${j.type||'—'} · ${j.handler||'—'}</div>
+        </div>
+        <div class="j-right">
+          <span class="badge b-complete">Complete</span>
+          <div class="j-value">${euros(j.value)}</div>
+          <span style="font-size:11px;color:var(--ink3)">${fmtDate(completedDate)}</span>
+        </div>
+      </div>
+    </div>`;
+  }).join(''));
+}
+
+// ═══════════════════════════════════════════════════════
+// ARCHIVE PAGE
+// ═══════════════════════════════════════════════════════
+function renderArchive() {
+  const lost = clients.filter(c => c.status === 'lost');
+
+  $('archiveSub').textContent = `${lost.length} archived lead${lost.length!==1?'s':''}`;
+
+  const byReason = {};
+  lost.forEach(c => {
+    const r = c._lossReason || 'other';
+    byReason[r] = (byReason[r]||0) + 1;
+  });
+  const topReason = Object.entries(byReason).sort((a,b)=>b[1]-a[1])[0];
+
+  setEl('archiveKPIs',`
+    <div class="kpi"><div class="kv">${lost.length}</div><div class="kl">Lost leads</div></div>
+    ${topReason ? `<div class="kpi"><div class="kv" style="font-size:13px">${LOSS_REASONS[topReason[0]]||'Other'}</div><div class="kl">Top loss reason</div></div>` : ''}
+  `);
+
+  if(!lost.length) {
+    setEl('archiveList',`<div style="text-align:center;padding:48px;color:var(--ink3)">
+      <div style="font-size:28px;margin-bottom:10px;opacity:.3">📁</div>
+      <div style="font-size:13px">Archive is empty.</div>
+      <div style="font-size:11px;color:var(--ink4);margin-top:6px">Lost leads appear here. Change their status to restore them.</div>
+    </div>`);
+    return;
+  }
+
+  setEl('archiveList', lost.map(c => {
+    const lostDate = c._lostAt ? fmtDate(c._lostAt) : '—';
+    const reason = LOSS_REASONS[c._lossReason] || c._lossReason || '—';
+    const handler = USERS[c.handler?.toLowerCase()]||{name:c.handler||'—'};
+    return `<div class="c-card" id="ac-${c.id}">
+      <div class="c-top" onclick="toggleCard('ac-${c.id}')">
+        <div class="c-av" style="background:rgba(176,53,53,.1);color:#e07878">${inits(c.name)}</div>
+        <div class="c-main">
+          <div class="c-name">${c.name}</div>
+          <div class="c-meta">${c.location||'—'} · ${handler.name} · Lost: ${lostDate}</div>
+        </div>
+        <div class="c-right">
+          <span class="badge" style="background:rgba(176,53,53,.1);color:#e07878;border:1px solid rgba(176,53,53,.15);font-size:10px">${reason}</span>
+          ${c._quoteVal?`<div class="c-value">${euros(c._quoteVal)}</div>`:''}
+          <span class="exp-icon">▾</span>
+        </div>
+      </div>
+      <div class="c-detail">
+        <div class="detail-grid">
+          <div class="d-field"><div class="d-label">Phone</div><div class="d-val">${c.phone||'—'}</div></div>
+          <div class="d-field"><div class="d-label">Email</div><div class="d-val">${c.email||'—'}</div></div>
+          <div class="d-field"><div class="d-label">Loss reason</div><div class="d-val">${reason}</div></div>
+          ${c._lossNote?`<div class="d-field"><div class="d-label">Note</div><div class="d-val">${c._lossNote}</div></div>`:''}
+          <div class="d-field"><div class="d-label">Date lost</div><div class="d-val">${lostDate}</div></div>
+        </div>
+        <div class="c-footer" style="justify-content:space-between;align-items:center">
+          <span style="font-size:11px;color:var(--ink3)">Change status to restore to pipeline</span>
+          <div style="display:flex;gap:8px">
+            <select class="fi" style="font-size:11px;padding:5px 8px;width:auto" onchange="restoreFromArchive('${c.id}', this.value)">
+              <option value="">Restore as…</option>
+              <option value="new">New lead</option>
+              <option value="warm">Warm — quote sent</option>
+              <option value="negotiating">Negotiating</option>
+              <option value="won">Won</option>
+            </select>
+          </div>
+        </div>
+      </div>
+    </div>`;
+  }).join(''));
+}
+
+async function restoreFromArchive(clientId, newStatus) {
+  if(!newStatus) return;
+  const c = clients.find(x=>x.id===clientId);
+  if(!c) return;
+  c.status = newStatus;
+  delete c._lossReason;
+  delete c._lossNote;
+  delete c._lostAt;
+  await api('saveClient', {}, {client: c});
+  renderArchive();
+  // Flash a subtle success
+  setBanner('ok', `${c.name} restored to pipeline as "${newStatus}"`);
+  setTimeout(()=>setBanner(''), 3000);
+}
+
 // ═══════════════════════════════════════════════════════
 // JOBS PAGE
 // ═══════════════════════════════════════════════════════
@@ -1535,6 +1784,11 @@ async function toggleTP(jobId,tpKey){
   t.done=!t.done; t.doneDate=t.done?new Date().toISOString().slice(0,10):null;
   await api('saveJob',{},{job:j});
   renderJobs(); setTimeout(()=>toggleJ(jobId),100);
+  // Notify if now fully complete
+  if(j.p1?.paid && j.p2?.paid && j.p3?.paid && j.touchpoints?.review?.done) {
+    setBanner('ok', `${j.clientName} is fully complete — check the Completed tab ✓`);
+    setTimeout(()=>setBanner(''), 5000);
+  }
 }
 
 // ─── Scheduling Modal ──────────────────────────────────
