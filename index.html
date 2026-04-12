@@ -354,6 +354,7 @@ tr:last-child td{border-bottom:none}
     <div style="display:flex;align-items:center;gap:14px">
       <div class="t-logo" onclick="goPage('clients')">Zen Living <span>CRM</span></div>
       <div class="t-nav">
+        <button class="tnb" id="tnb-leads" onclick="goPage('leads')" style="display:none">Leads <span id="leadsCount" style="background:var(--warn);color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;margin-left:4px;display:none"></span></button>
         <button class="tnb on" id="tnb-clients" onclick="goPage('clients')">Clients</button>
         <button class="tnb" id="tnb-quote" onclick="goPage('quote')" style="display:none">Quote</button>
         <button class="tnb" id="tnb-jobs"    onclick="goPage('jobs')">Jobs</button>
@@ -453,6 +454,18 @@ tr:last-child td{border-bottom:none}
       <div class="jobs-list" id="jobsList">
         <div style="text-align:center;padding:40px;color:var(--ink3)">Loading…</div>
       </div>
+    </div>
+  </div>
+
+  <!-- ── LEADS ── -->
+  <div class="page" id="page-leads">
+    <div class="pw">
+      <div class="ph">
+        <div><div class="pt">New Leads</div><div class="ps" id="leadsSub"></div></div>
+        <button class="btn sm" onclick="refreshLeads()">↻ Refresh</button>
+      </div>
+      <div class="kpi-row" id="leadsKPIs"></div>
+      <div class="clients-list" id="leadsList"></div>
     </div>
   </div>
 
@@ -775,6 +788,9 @@ function login(user) {
   $('s-app').classList.add('on');
   $('whoName').textContent=USERS[user].name;
   $('whoDot').style.background=USERS[user].color;
+  // Leads tab only visible to Arthur
+  const leadsTab = $('tnb-leads');
+  if(leadsTab) leadsTab.style.display = user === 'arthur' ? '' : 'none';
   if(!isConfigured()) setBanner('offline','Running offline — configure API_URL to enable Google Sheets sync');
   loadAll();
 }
@@ -795,6 +811,7 @@ function goPage(p) {
   if(p==='clients')   renderClients();
   if(p==='jobs')      renderJobs();
   if(p==='cal')       renderCal();
+  if(p==='leads')     renderLeads();
   if(p==='completed') renderCompleted();
   if(p==='archive')   renderArchive();
 }
@@ -848,6 +865,10 @@ async function loadAll() {
   }
   
   goPage('clients');
+  // Arthur: check for new leads and show badge
+  if(currentUser === 'arthur') {
+    checkLeadsBadge();
+  }
 }
 
 // ═══════════════════════════════════════════════════════
@@ -951,17 +972,32 @@ function closeClientModal() { $('clientModal').classList.remove('on'); }
 async function saveClient() {
   const name=val('m-name'); if(!name){alert('Client name required.');return;}
   const newHandler = val('m-handler');
+  const newStatus  = val('m-status');
+
+  // Start with ALL existing fields so nothing gets dropped (_quoteVal, _type, etc.)
+  const existing = editingClientId ? (clients.find(x=>x.id===editingClientId)||{}) : {};
   const client = {
-    id: editingClientId||uid(), name, handler:newHandler,
-    phone:val('m-phone'), email:val('m-email'), address:val('m-address'),
-    eircode:val('m-eircode'), location:val('m-location'), status:val('m-status'),
-    createdBy:currentUser, createdAt:new Date().toISOString(),
+    ...existing,
+    id: editingClientId||uid(),
+    name,
+    handler: newHandler,
+    phone:    val('m-phone'),
+    email:    val('m-email'),
+    address:  val('m-address'),
+    eircode:  val('m-eircode'),
+    location: val('m-location'),
+    status:   newStatus,
+    createdBy: existing.createdBy || currentUser,
+    createdAt: existing.createdAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
   };
+
   await api('saveClient',{},{client});
+
   if(editingClientId) {
     const i=clients.findIndex(x=>x.id===editingClientId);
-    if(i>=0) clients[i]={...clients[i],...client};
-    // If handler changed, sync to the linked job immediately
+    if(i>=0) clients[i] = client;
+    // If handler changed, sync to the linked job
     const linkedJob = jobs.find(j=>j.clientId===editingClientId);
     if(linkedJob && (linkedJob.handler||'').toLowerCase() !== newHandler.toLowerCase()) {
       linkedJob.handler = newHandler;
@@ -1501,6 +1537,143 @@ async function confirmLoss() {
   await api('saveClient', {}, {client: c});
   closeLossModal();
   renderClients();
+}
+
+
+// ═══════════════════════════════════════════════════════
+// LEADS PAGE — Squarespace form submissions
+// ═══════════════════════════════════════════════════════
+let leadsCache = [];
+
+async function checkLeadsBadge() {
+  try {
+    const leads = await api('getLeads', {});
+    leadsCache = leads || [];
+    const count = leadsCache.length;
+    const chip = $('leadsCount');
+    const tab = $('tnb-leads');
+    if(chip) { chip.textContent = count; chip.style.display = count ? 'inline' : 'none'; }
+    if(tab)  { tab.style.display = currentUser === 'arthur' ? '' : 'none'; }
+  } catch(e) {}
+}
+
+async function refreshLeads() {
+  $('leadsList').innerHTML = '<div style="text-align:center;padding:40px;color:var(--ink3)">Fetching latest leads…</div>';
+  leadsCache = [];
+  await checkLeadsBadge();
+  renderLeads();
+}
+
+function renderLeads() {
+  const leads = leadsCache;
+  $('leadsSub').textContent = `${leads.length} unassigned lead${leads.length!==1?'s':''} from website`;
+
+  const bySource = {};
+  leads.forEach(l => { const s=l.source||'Direct'; bySource[s]=(bySource[s]||0)+1; });
+  const topSource = Object.entries(bySource).sort((a,b)=>b[1]-a[1])[0];
+
+  setEl('leadsKPIs',`
+    <div class="kpi"><div class="kv">${leads.length}</div><div class="kl">New submissions</div></div>
+    ${topSource?`<div class="kpi"><div class="kv" style="font-size:13px">${topSource[0]}</div><div class="kl">Top source</div></div>`:''}
+  `);
+
+  if(!leads.length) {
+    setEl('leadsList',`<div style="text-align:center;padding:48px;color:var(--ink3)">
+      <div style="font-size:28px;margin-bottom:10px;opacity:.3">✓</div>
+      <div style="font-size:13px">All caught up — no new leads.</div>
+      <div style="font-size:11px;color:var(--ink4);margin-top:6px">New Squarespace form submissions will appear here automatically.</div>
+    </div>`);
+    return;
+  }
+
+  setEl('leadsList', leads.map((l,idx) => {
+    const date = l.submittedOn ? l.submittedOn : '—';
+    return `<div class="c-card" id="lc-${idx}">
+      <div class="c-top" onclick="toggleCard('lc-${idx}')">
+        <div class="c-av" style="background:rgba(74,122,154,.15);color:#8ab8d8">${inits(l.name)}</div>
+        <div class="c-main">
+          <div class="c-name">${l.name}</div>
+          <div class="c-meta">${l.location||'—'} · ${l.projectType||'—'} · ${date}</div>
+        </div>
+        <div class="c-right">
+          ${l.budget?`<span class="badge b-neg" style="font-size:10px">${l.budget}</span>`:''}
+          ${l.timeline?`<span class="badge b-new" style="font-size:10px;margin-left:4px">${l.timeline}</span>`:''}
+          <span class="exp-icon">▾</span>
+        </div>
+      </div>
+      <div class="c-detail">
+        <div class="detail-grid">
+          <div class="d-field"><div class="d-label">Phone</div><div class="d-val">${l.phone||'—'}</div></div>
+          <div class="d-field"><div class="d-label">Email</div><div class="d-val">${l.email||'—'}</div></div>
+          <div class="d-field"><div class="d-label">Project type</div><div class="d-val">${l.projectType||'—'}</div></div>
+          <div class="d-field"><div class="d-label">Budget</div><div class="d-val">${l.budget||'—'}</div></div>
+          <div class="d-field"><div class="d-label">Timeline</div><div class="d-val">${l.timeline||'—'}</div></div>
+          <div class="d-field"><div class="d-label">Source</div><div class="d-val">${l.source||'—'}</div></div>
+          ${l.message?`<div class="d-field" style="grid-column:1/-1"><div class="d-label">Message</div><div class="d-val" style="white-space:pre-wrap">${l.message}</div></div>`:''}
+        </div>
+        <div class="c-footer" style="align-items:center;justify-content:space-between">
+          <span style="font-size:11px;color:var(--ink3)">Assign to handler and import</span>
+          <div style="display:flex;gap:8px;align-items:center">
+            <select class="fi" id="lead-handler-${idx}" style="font-size:11px;padding:5px 8px;width:auto">
+              <option value="Diana">Diana</option>
+              <option value="Huan">Huan Zhang</option>
+              <option value="arthur">Arthur Zukayev</option>
+            </select>
+            <button class="btn sm primary" onclick="importLead(${idx})">Import to CRM →</button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+  }).join(''));
+}
+
+async function importLead(idx) {
+  const l = leadsCache[idx];
+  if(!l) return;
+  const handlerVal = $(`lead-handler-${idx}`)?.value || 'Diana';
+
+  // Map handler display name to username
+  const handlerMap = {'Diana':'Diana','Huan Zhang':'Huan','Arthur Zukayev':'arthur'};
+  const handler = handlerMap[handlerVal] || handlerVal;
+
+  const client = {
+    id:        uid(),
+    name:      l.name,
+    handler:   handler,
+    phone:     l.phone || '',
+    email:     l.email || '',
+    address:   l.location || '',
+    eircode:   '',
+    location:  l.location || '',
+    status:    'new',
+    createdBy: 'arthur',
+    createdAt: new Date().toISOString(),
+    _quoteVal: 0,
+    _type:     l.projectType || '',
+    _source:   l.source || '',
+    _budget:   l.budget || '',
+    _timeline: l.timeline || '',
+    _message:  l.message || '',
+    _submittedOn: l.submittedOn || '',
+  };
+
+  // Save client to CRM
+  await api('saveClient', {}, {client});
+  clients.push(client);
+
+  // Mark lead as imported in tracking sheet
+  await api('markLeadImported', {}, {key: l._key});
+
+  // Remove from local cache
+  leadsCache.splice(idx, 1);
+
+  setBanner('ok', `${l.name} imported and assigned to ${handlerVal} ✓`);
+  setTimeout(()=>setBanner(''), 3000);
+
+  // Update badge and re-render
+  const chip = $('leadsCount');
+  if(chip) { chip.textContent = leadsCache.length; chip.style.display = leadsCache.length ? 'inline' : 'none'; }
+  renderLeads();
 }
 
 // ═══════════════════════════════════════════════════════
