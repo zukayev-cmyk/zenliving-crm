@@ -393,6 +393,7 @@ tr:last-child td{border-bottom:none}
       <div class="qb-client-name" id="qbClientLabel"></div>
       <div style="display:flex;align-items:center;gap:8px">
         <span style="font-size:11px;color:var(--ink4)" id="qbSaveLabel"></span>
+        <button class="btn sm" onclick="saveQuoteVersion()" title="Save a named snapshot to version history" id="saveVersionBtn">📌 Save version</button>
         <button class="btn sm" onclick="openQuoteHistory()" title="View and restore previous versions">↩ History</button>
         <button class="btn sm primary" onclick="exportPDF()">Export PDF ↗</button>
       </div>
@@ -1314,8 +1315,7 @@ function scheduleSave(){
     // Update quote value on client record
     const gt=grandTotal();
     const c=clients.find(x=>x.id===activeClientId); if(c) c._quoteVal=gt;
-    const cForQuote=clients.find(x=>x.id===activeClientId);
-    await api('saveQuote',{},{clientId:activeClientId,quote:activeQuote,clientName:cForQuote?cForQuote.name:''});
+    await api('saveQuote',{},{clientId:activeClientId,quote:activeQuote});
     const ts=new Date().toLocaleTimeString('en-IE',{hour:'2-digit',minute:'2-digit'});
     $('saveTs').textContent=`Last saved ${ts}`;
     $('qbSaveLabel').textContent=`Saved ${ts}`;
@@ -1545,6 +1545,23 @@ function exportPDF(){
 // ═══════════════════════════════════════════════════════
 // QUOTE VERSION HISTORY
 // ═══════════════════════════════════════════════════════
+async function saveQuoteVersion() {
+  if(!activeQuote||!activeClientId) return;
+  const c = clients.find(x=>x.id===activeClientId);
+  const btn = $('saveVersionBtn');
+  if(btn) { btn.textContent = '⏳ Saving…'; btn.disabled = true; }
+  try {
+    await api('saveQuote', {}, {clientId:activeClientId, quote:activeQuote, clientName:c?c.name:'', _saveHistory:true});
+    setBanner('ok', 'Version saved to history ✓');
+    setTimeout(()=>setBanner(''), 3000);
+  } catch(e) {
+    setBanner('error', 'Could not save version');
+    setTimeout(()=>setBanner(''), 3000);
+  } finally {
+    if(btn) { btn.textContent = '📌 Save version'; btn.disabled = false; }
+  }
+}
+
 async function openQuoteHistory() {
   if(!activeClientId) return;
   const c = clients.find(x=>x.id===activeClientId);
