@@ -954,7 +954,7 @@ function renderClients() {
         <div class="c-footer">
           <button class="btn sm" onclick="editClient('${c.id}')">Edit details</button>
           <button class="btn sm danger" onclick="openLossModal('${c.id}')">Mark lost</button>
-          ${c.status==='won'&&jobForClient?`<button class="btn sm" style="border-color:rgba(74,122,154,.35);color:#8ab8d8" onclick="openSched('${jobForClient.id}')">${jobForClient.startDate?'📅 Reschedule':'📅 Schedule'}</button>`:''}
+          ${c.status==='won'?`<button class="btn sm" style="border-color:rgba(74,122,154,.35);color:#8ab8d8" onclick="scheduleFromClient('${c.id}')">${jobForClient&&jobForClient.startDate?'📅 Reschedule':'📅 Schedule'}</button>`:''}
           <button class="btn sm primary" onclick="openQuote('${c.id}')">
             ${c._quoteVal?'Edit quote →':'Create quote →'}
           </button>
@@ -2086,6 +2086,44 @@ function renderCal(){
 }
 
 // ── PASSWORDS ──────────────────────────────
+// ── Schedule from client card — creates job if needed ──────────────────────
+async function scheduleFromClient(clientId) {
+  const c = clients.find(x=>x.id===clientId);
+  if(!c) return;
+  let j = jobs.find(x=>x.clientId===clientId);
+  if(!j) {
+    // Create a job record on the fly for this won client
+    const val = c._quoteVal || 0;
+    j = {
+      id:         'j'+clientId,
+      clientId:   clientId,
+      clientName: c.name,
+      location:   c.location || '',
+      type:       c._type || 'Main Bathroom',
+      handler:    c.handler || 'diana',
+      value:      val,
+      status:     'awaiting-schedule',
+      startDate:  null,
+      duration:   10,
+      team:       null,
+      notes:      null,
+      p1: {amount:Math.round(val*0.5*100)/100, paid:true,  paidDate:new Date().toISOString().slice(0,10)},
+      p2: {amount:Math.round(val*0.25*100)/100,paid:false, paidDate:null},
+      p3: {amount:Math.round(val*0.25*100)/100,paid:false, paidDate:null},
+      touchpoints:{
+        preStart:  {label:'Pre-start confirmation', done:false, doneDate:null},
+        p2reminder:{label:'P2 payment reminder',    done:false, doneDate:null},
+        completion:{label:'Completion message',      done:false, doneDate:null},
+        followUp:  {label:'Follow-up check-in',      done:false, doneDate:null},
+        review:    {label:'Review request',           done:false, doneDate:null},
+      }
+    };
+    await api('saveJob',{},{job:j});
+    jobs.push(j);
+  }
+  openSched(j.id);
+}
+
 // ── Client notes auto-save ──────────────────────────────
 function scheduleNoteSave(clientId) {
   const el = $('notes-'+clientId);
