@@ -365,6 +365,7 @@ tr:last-child td{border-bottom:none}
     </div>
     <div style="display:flex;align-items:center;gap:10px">
       <div class="who-badge"><div class="who-dot" id="whoDot"></div><span id="whoName"></span></div>
+      <button class="btn sm" id="backupBtn" onclick="downloadBackup()" style="display:none" title="Download full data backup">⬇ Backup</button>
       <button class="btn sm" onclick="logout()">Sign out</button>
     </div>
   </div>
@@ -392,6 +393,7 @@ tr:last-child td{border-bottom:none}
       <div class="qb-client-name" id="qbClientLabel"></div>
       <div style="display:flex;align-items:center;gap:8px">
         <span style="font-size:11px;color:var(--ink4)" id="qbSaveLabel"></span>
+        <button class="btn sm" onclick="openQuoteHistory()" title="View and restore previous versions">↩ History</button>
         <button class="btn sm primary" onclick="exportPDF()">Export PDF ↗</button>
       </div>
     </div>
@@ -484,6 +486,18 @@ tr:last-child td{border-bottom:none}
       <div class="ph"><div><div class="pt">Archive</div><div class="ps" id="archiveSub"></div></div></div>
       <div class="kpi-row" id="archiveKPIs"></div>
       <div class="clients-list" id="archiveList"></div>
+    </div>
+  </div>
+
+  <!-- ── QUOTE HISTORY MODAL ── -->
+  <div class="modal-bg" id="qhModal" onclick="if(event.target===this)closeQHModal()">
+    <div class="modal" onclick="event.stopPropagation()" style="max-width:480px">
+      <div class="modal-title">Quote version history</div>
+      <div class="modal-sub" id="qhClientName"></div>
+      <div style="margin-top:14px;max-height:320px;overflow-y:auto" id="qhList"></div>
+      <div class="modal-footer">
+        <button class="btn" onclick="closeQHModal()">Close</button>
+      </div>
     </div>
   </div>
 
@@ -802,9 +816,11 @@ function login(user) {
   $('s-app').classList.add('on');
   $('whoName').textContent=USERS[user].name;
   $('whoDot').style.background=USERS[user].color;
-  // Leads tab only visible to Arthur
+  // Leads tab and backup button only visible to Arthur
   const leadsTab = $('tnb-leads');
   if(leadsTab) leadsTab.style.display = user === 'arthur' ? '' : 'none';
+  const backupBtn = $('backupBtn');
+  if(backupBtn) backupBtn.style.display = user === 'arthur' ? '' : 'none';
   if(!isConfigured()) setBanner('offline','Running offline — configure API_URL to enable Google Sheets sync');
   loadAll();
 }
@@ -1298,7 +1314,8 @@ function scheduleSave(){
     // Update quote value on client record
     const gt=grandTotal();
     const c=clients.find(x=>x.id===activeClientId); if(c) c._quoteVal=gt;
-    await api('saveQuote',{},{clientId:activeClientId,quote:activeQuote});
+    const cForQuote=clients.find(x=>x.id===activeClientId);
+    await api('saveQuote',{},{clientId:activeClientId,quote:activeQuote,clientName:cForQuote?cForQuote.name:''});
     const ts=new Date().toLocaleTimeString('en-IE',{hour:'2-digit',minute:'2-digit'});
     $('saveTs').textContent=`Last saved ${ts}`;
     $('qbSaveLabel').textContent=`Saved ${ts}`;
@@ -1523,6 +1540,99 @@ function exportPDF(){
   win.document.close();
 }
 
+
+
+// ═══════════════════════════════════════════════════════
+// QUOTE VERSION HISTORY
+// ═══════════════════════════════════════════════════════
+async function openQuoteHistory() {
+  if(!activeClientId) return;
+  const c = clients.find(x=>x.id===activeClientId);
+  $('qhClientName').textContent = c ? c.name : '';
+  setEl('qhList', '<div style="text-align:center;padding:20px;color:var(--ink3);font-size:12px">Loading history…</div>');
+  $('qhModal').classList.add('on');
+
+  const history = await api('getQuoteHistory', {clientId: activeClientId});
+  if(!history || !history.length) {
+    setEl('qhList', '<div style="text-align:center;padding:20px;color:var(--ink3);font-size:12px">No saved versions yet.<br>Versions are saved automatically as you edit.</div>');
+    return;
+  }
+
+  setEl('qhList', history.map((h, i) => {
+    const dt = new Date(h.savedAt);
+    const label = dt.toLocaleDateString('en-IE',{day:'numeric',month:'short',year:'numeric'}) + ' at ' + dt.toLocaleTimeString('en-IE',{hour:'2-digit',minute:'2-digit'});
+    return `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--rule);gap:12px">
+      <div>
+        <div style="font-size:12px;color:var(--ink)">${label}</div>
+        <div style="font-size:10px;color:var(--ink3);margin-top:2px">${i===0?'Latest saved version':'Version '+(history.length-i)}</div>
+      </div>
+      ${i===0
+        ? '<span style="font-size:10px;color:var(--ink3);padding:3px 8px;border:1px solid var(--rule);border-radius:10px">Current</span>'
+        : `<button class="btn xs primary" onclick="restoreQuoteVersion('${h.historyId}')">Restore</button>`
+      }
+    </div>`;
+  }).join(''));
+}
+
+function closeQHModal() { $('qhModal').classList.remove('on'); }
+
+async function restoreQuoteVersion(historyId) {
+  if(!confirm('Restore this version? The current quote will be replaced.')) return;
+  const result = await api('restoreQuote', {}, {clientId: activeClientId, historyId});
+  if(result && result.quote) {
+    activeQuote = result.quote;
+    activeRoomId = result.quote.rooms[0].id;
+    qMode = result.quote.mode || 'supply';
+    qVatOn = result.quote.vatOn || false;
+    setMode(qMode, false);
+    $('vatBox').textContent = qVatOn ? '✓' : '';
+    $('vatBox').classList.toggle('on', qVatOn);
+    $('vatRate').value = result.quote.vatRateVal || '13.5';
+    $('vatRate').style.display = qVatOn ? 'inline-block' : 'none';
+    $('vatPctLbl').style.display = qVatOn ? 'inline' : 'none';
+    renderRoomTabs(); renderSheet(); renderSummary(); checkIssues();
+    closeQHModal();
+    setBanner('ok', 'Quote restored successfully ✓');
+    setTimeout(()=>setBanner(''), 3000);
+  } else {
+    alert('Could not restore this version. Please try again.');
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// ONE-CLICK BACKUP EXPORT
+// ═══════════════════════════════════════════════════════
+async function downloadBackup() {
+  const btn = $('backupBtn');
+  if(btn) { btn.textContent = '⏳ Exporting…'; btn.disabled = true; }
+  try {
+    const backup = await api('getBackup', {});
+    if(!backup) throw new Error('No data returned');
+
+    const json = JSON.stringify(backup, null, 2);
+    const blob = new Blob([json], {type: 'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const dateStr = new Date().toISOString().slice(0,10);
+    a.href = url;
+    a.download = `ZenLiving-CRM-Backup-${dateStr}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    const count = backup.clients ? backup.clients.length : 0;
+    const qCount = backup.quotes ? Object.keys(backup.quotes).length : 0;
+    const jCount = backup.jobs ? backup.jobs.length : 0;
+    setBanner('ok', `Backup downloaded — ${count} clients, ${qCount} quotes, ${jCount} jobs ✓`);
+    setTimeout(()=>setBanner(''), 4000);
+  } catch(e) {
+    setBanner('error', 'Backup failed: ' + e.message);
+    setTimeout(()=>setBanner(''), 4000);
+  } finally {
+    if(btn) { btn.textContent = '⬇ Backup'; btn.disabled = false; }
+  }
+}
 
 // ═══════════════════════════════════════════════════════
 // LOSS MODAL
