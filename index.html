@@ -291,6 +291,13 @@ tr:last-child td{border-bottom:none}
   .c-right,.j-right{flex-wrap:wrap;gap:4px}
   .cal-pill{display:none}
 }
+
+/* ── PIN login ── */
+.pin-btn{padding:14px;border-radius:var(--R);border:1px solid var(--rule);background:var(--stone2);color:var(--ink);font-family:var(--fb);font-size:18px;cursor:pointer;transition:all .15s}
+.pin-btn:hover{background:var(--stone3);color:var(--sand);border-color:rgba(200,184,154,.2)}
+.pin-dot{width:12px;height:12px;border-radius:50%;border:2px solid var(--ink3);transition:background .15s}
+.pin-dot.filled{background:var(--sand);border-color:var(--sand)}
+
 </style>
 </head>
 <body>
@@ -300,22 +307,44 @@ tr:last-child td{border-bottom:none}
   <div class="login-box">
     <div class="login-logo">Zen Living</div>
     <div class="login-tagline">Bathroom Renovations · CRM</div>
-    <div class="login-label">Sign in as</div>
-    <div class="user-btns">
-      <button class="user-btn" onclick="login('arthur')">
-        <div class="u-av" style="background:rgba(200,184,154,.15);color:#c8b89a">A</div>
-        Arthur Zukayev <span class="u-role">Admin</span>
-      </button>
-      <button class="user-btn" onclick="login('diana')">
-        <div class="u-av" style="background:rgba(90,138,106,.15);color:#7ec49a">D</div>
-        Diana <span class="u-role">Sales</span>
-      </button>
-      <button class="user-btn" onclick="login('huan')">
-        <div class="u-av" style="background:rgba(74,122,154,.15);color:#8ab8d8">H</div>
-        Huan Zhang <span class="u-role">Sales</span>
-      </button>
+    <div id="login-step1">
+      <div class="login-label">Sign in as</div>
+      <div class="user-btns">
+        <button class="user-btn" onclick="selectUser('arthur')">
+          <div class="u-av" style="background:rgba(200,184,154,.15);color:#c8b89a">A</div>
+          Arthur Zukayev <span class="u-role">Admin</span>
+        </button>
+        <button class="user-btn" onclick="selectUser('diana')">
+          <div class="u-av" style="background:rgba(90,138,106,.15);color:#7ec49a">D</div>
+          Diana <span class="u-role">Sales</span>
+        </button>
+        <button class="user-btn" onclick="selectUser('huan')">
+          <div class="u-av" style="background:rgba(74,122,154,.15);color:#8ab8d8">H</div>
+          Huan Zhang <span class="u-role">Sales</span>
+        </button>
+      </div>
+    </div>
+    <div id="login-step2" style="display:none">
+      <div class="login-label" id="pin-label">Enter PIN</div>
+      <div style="display:flex;gap:8px;justify-content:center;margin:16px 0" id="pin-dots"></div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;max-width:220px;margin:0 auto">
+        <button class="pin-btn" onclick="pinPress(1)">1</button>
+        <button class="pin-btn" onclick="pinPress(2)">2</button>
+        <button class="pin-btn" onclick="pinPress(3)">3</button>
+        <button class="pin-btn" onclick="pinPress(4)">4</button>
+        <button class="pin-btn" onclick="pinPress(5)">5</button>
+        <button class="pin-btn" onclick="pinPress(6)">6</button>
+        <button class="pin-btn" onclick="pinPress(7)">7</button>
+        <button class="pin-btn" onclick="pinPress(8)">8</button>
+        <button class="pin-btn" onclick="pinPress(9)">9</button>
+        <button class="pin-btn" onclick="pinBack()" style="font-size:16px">⌫</button>
+        <button class="pin-btn" onclick="pinPress(0)">0</button>
+        <button class="pin-btn" onclick="pinCancel()">✕</button>
+      </div>
+      <div id="pin-error" style="color:var(--warn);font-size:12px;text-align:center;margin-top:10px;min-height:18px"></div>
     </div>
   </div>
+</div>
 </div>
 
 <!-- ═══════════ MAIN APP ═══════════ -->
@@ -721,12 +750,39 @@ function goPage(p) {
 // LOAD ALL DATA
 // ═══════════════════════════════════════════════════════
 async function loadAll() {
+  // First load remote data
   const [cls, jbs] = await Promise.all([
     api('getClients', {handler:currentUser}),
     api('getJobs',    {handler:currentUser}),
   ]);
-  clients = cls || [];
-  jobs    = jbs || [];
+  
+  // If remote is empty, seed with preloaded data
+  if (!cls || cls.length === 0) {
+    // Push preloaded clients to backend
+    for (const c of PRELOADED_CLIENTS) {
+      await api('saveClient', {}, {client: c});
+    }
+    clients = PRELOADED_CLIENTS;
+  } else {
+    clients = cls;
+  }
+  
+  if (!jbs || jbs.length === 0) {
+    // Push preloaded jobs to backend
+    for (const j of PRELOADED_JOBS) {
+      await api('saveJob', {}, {job: j});
+    }
+    jobs = PRELOADED_JOBS;
+  } else {
+    jobs = jbs;
+  }
+  
+  // Filter for non-admin users
+  if (currentUser !== 'arthur') {
+    clients = clients.filter(c => (c.handler||'').toLowerCase() === currentUser || (c.createdBy||'').toLowerCase() === currentUser);
+    jobs = jobs.filter(j => (j.handler||'').toLowerCase() === currentUser);
+  }
+  
   goPage('clients');
 }
 
@@ -1348,6 +1404,61 @@ function renderCal(){
   }
   setEl('calGrid',html);
 }
+
+// ── PASSWORDS ──────────────────────────────
+const PINS = {arthur:'1234', diana:'2580', huan:'7531'};
+let pendingUser = null;
+let currentPin = '';
+
+function selectUser(user) {
+  pendingUser = user;
+  currentPin = '';
+  document.getElementById('login-step1').style.display = 'none';
+  document.getElementById('login-step2').style.display = 'block';
+  document.getElementById('pin-label').textContent = 'Enter PIN for ' + USERS[user].name;
+  renderPinDots();
+}
+
+function renderPinDots() {
+  const c = document.getElementById('pin-dots');
+  c.innerHTML = [0,1,2,3].map(i => `<div class="pin-dot ${i < currentPin.length ? 'filled' : ''}"></div>`).join('');
+}
+
+function pinPress(n) {
+  if (currentPin.length >= 4) return;
+  currentPin += n;
+  renderPinDots();
+  document.getElementById('pin-error').textContent = '';
+  if (currentPin.length === 4) {
+    setTimeout(() => {
+      if (currentPin === PINS[pendingUser]) {
+        login(pendingUser);
+        currentPin = '';
+      } else {
+        document.getElementById('pin-error').textContent = 'Incorrect PIN — try again';
+        currentPin = '';
+        renderPinDots();
+      }
+    }, 150);
+  }
+}
+
+function pinBack() {
+  currentPin = currentPin.slice(0,-1);
+  renderPinDots();
+}
+
+function pinCancel() {
+  pendingUser = null;
+  currentPin = '';
+  document.getElementById('login-step1').style.display = 'block';
+  document.getElementById('login-step2').style.display = 'none';
+}
+
+// ── PRE-LOADED DATA ─────────────────────────
+const PRELOADED_CLIENTS = [{"name": "Karyn Leek", "phone": "083 063 3079", "email": "Karynleek@gmail.com", "address": "The Orchard, Castletown Kilpatrick, Navan", "eircode": "C15V129", "location": "Navan, Meath", "handler": "Diana", "status": "won", "_quoteVal": 6296.2, "_type": "Bathroom", "_jobStatus": "complete", "id": "cmp001x", "createdBy": "arthur", "createdAt": "2026-01-15T10:00:00.000Z"}, {"name": "Noel", "phone": "087 636 1567", "email": "", "address": "5 Tara Court Park, Navan, Co. Meath", "eircode": "C15 C2Y0", "location": "Navan, Meath", "handler": "Diana", "status": "won", "_quoteVal": 6342.56, "_type": "Downstairs WC", "_jobStatus": "complete", "id": "cmp002x", "createdBy": "arthur", "createdAt": "2026-01-15T10:00:00.000Z"}, {"name": "Martin Foley", "phone": "086 376 2951", "email": "", "address": "109 Fitzherbert Court, Slane Road, Navan", "eircode": "C15 X2K5", "location": "Navan, Meath", "handler": "Diana", "status": "won", "_quoteVal": 12228.69, "_type": "Main Bathroom + Ensuite", "_jobStatus": "complete", "id": "cmp003x", "createdBy": "arthur", "createdAt": "2026-01-15T10:00:00.000Z"}, {"name": "Derek", "phone": "087 762 7911", "email": "", "address": "41 Aylesbury Lodge, Moatlands, Navan Co. Meath", "eircode": "C15 DC43", "location": "Navan, Meath", "handler": "Diana", "status": "won", "_quoteVal": 7019.93, "_type": "Main Bathroom", "_jobStatus": "complete", "id": "cmp004x", "createdBy": "arthur", "createdAt": "2026-01-15T10:00:00.000Z"}, {"name": "Funmi", "phone": "086 218 0042", "email": "", "address": "15 Pinewood Heath, Balbriggan, Co. Dublin", "eircode": "K32 KP20", "location": "Balbriggan, Dublin", "handler": "Diana", "status": "won", "_quoteVal": 3385.0, "_type": "Main Bathroom", "_jobStatus": "complete", "id": "cmp005x", "createdBy": "arthur", "createdAt": "2026-01-15T10:00:00.000Z"}, {"name": "Craig Blackwell", "phone": "087 667 9695", "email": "", "address": "Newtown Clonbun, Trim, Co. Meath", "eircode": "C15 CV65", "location": "Trim, Meath", "handler": "Diana", "status": "won", "_quoteVal": 5700.0, "_type": "Bathroom Tiling", "_jobStatus": "complete", "id": "cmp006x", "createdBy": "arthur", "createdAt": "2026-01-15T10:00:00.000Z"}, {"name": "Aine Rooney", "phone": "086 337 1173", "email": "aine.rooney1@gmail.com", "address": "20 Tower View, Stoney Lane, Ardee, Co. Louth", "eircode": "A92 NW28", "location": "Ardee, Louth", "handler": "Diana", "status": "won", "_quoteVal": 13986.42, "_type": "Main Bathroom", "_jobStatus": "awaiting-schedule", "id": "bkd001x", "createdBy": "arthur", "createdAt": "2026-02-01T10:00:00.000Z"}, {"name": "Aine Maher", "phone": "085 717 5961", "email": "kerrigai@tcd.ie", "address": "9 Ballyowen Lawn, Lucan, Co. Dublin", "eircode": "K78 K3E8", "location": "Lucan, Dublin", "handler": "Diana", "status": "won", "_quoteVal": 17553.42, "_type": "Main Bathroom", "_jobStatus": "awaiting-schedule", "id": "bkd002x", "createdBy": "arthur", "createdAt": "2026-02-01T10:00:00.000Z"}, {"name": "Caroline", "phone": "087 317 4723", "email": "", "address": "Quinn Crash Repairs, Bellinter, Navan, Co. Meath", "eircode": "C15 YX44", "location": "Navan, Meath", "handler": "Diana", "status": "won", "_quoteVal": 7052.0, "_type": "Main Bathroom", "_jobStatus": "awaiting-schedule", "id": "bkd003x", "createdBy": "arthur", "createdAt": "2026-02-01T10:00:00.000Z"}, {"name": "Eimear", "phone": "086 344 7400", "email": "", "address": "9 Knightsbrook Court, Trim, Co. Meath", "eircode": "C15 Y97E", "location": "Trim, Meath", "handler": "Diana", "status": "won", "_quoteVal": 12937.0, "_type": "Main Bathroom + WC", "_jobStatus": "awaiting-schedule", "id": "bkd004x", "createdBy": "arthur", "createdAt": "2026-02-01T10:00:00.000Z"}, {"name": "Felina & JB", "phone": "083 137 7302", "email": "", "address": "19 Lock-Keepers Walk, Royal Canal Park, Dublin 15", "eircode": "D15 P2K7", "location": "Dublin 15", "handler": "Diana", "status": "won", "_quoteVal": 31553.67, "_type": "3 Rooms", "_jobStatus": "awaiting-schedule", "id": "bkd005x", "createdBy": "arthur", "createdAt": "2026-02-01T10:00:00.000Z"}, {"name": "Gillian", "phone": "087 714 9184", "email": "", "address": "2 Racehill Hall, Racehill Manor, Ashbourne, Co. Meath", "eircode": "A84 K744", "location": "Ashbourne, Meath", "handler": "Diana", "status": "won", "_quoteVal": 23560.54, "_type": "Main Bathroom + Ensuite", "_jobStatus": "awaiting-schedule", "id": "bkd006x", "createdBy": "arthur", "createdAt": "2026-02-01T10:00:00.000Z"}, {"name": "John Goodwin", "phone": "086 409 3310", "email": "macbookpromail@gmail.com", "address": "191 Waterville Crescent, Dundalk, Co. Louth", "eircode": "A91 H6WA", "location": "Dundalk, Louth", "handler": "Diana", "status": "won", "_quoteVal": 4500.0, "_type": "Main Bathroom", "_jobStatus": "awaiting-schedule", "id": "bkd007x", "createdBy": "arthur", "createdAt": "2026-02-01T10:00:00.000Z"}, {"name": "Stephen Bohan", "phone": "087 174 5955", "email": "", "address": "Mullanakill, Castlepollard, Co. Westmeath", "eircode": "N91 C586", "location": "Castlepollard, Westmeath", "handler": "Diana", "status": "won", "_quoteVal": 22207.0, "_type": "Multiple Bathrooms", "_jobStatus": "awaiting-schedule", "id": "bkd008x", "createdBy": "arthur", "createdAt": "2026-02-01T10:00:00.000Z"}, {"name": "Tiernan Butler", "phone": "086 123 4602", "email": "tiernan.butler@gmail.com", "address": "Apartment 14, The Elm, Rockfield, Dundrum, Dublin 16", "eircode": "D16 CC60", "location": "Dundrum, Dublin", "handler": "Diana", "status": "won", "_quoteVal": 10484.0, "_type": "Ensuite", "_jobStatus": "awaiting-schedule", "id": "bkd009x", "createdBy": "arthur", "createdAt": "2026-02-01T10:00:00.000Z"}, {"name": "Jane Donegan", "phone": "086 806 6474", "email": "", "address": "Lyngard, Loughlinstown, Kilbride, Co. Meath", "eircode": "D15 E168", "location": "Kilbride, Meath", "handler": "Diana", "status": "won", "_quoteVal": 8531.0, "_type": "Main Bathroom", "_jobStatus": "awaiting-schedule", "id": "bkd010x", "createdBy": "arthur", "createdAt": "2026-02-01T10:00:00.000Z"}, {"name": "Mary O'Dowd", "phone": "087 931 3466", "email": "", "address": "Apartment 116, Shrewsbury Park, Dublin 4", "eircode": "D04 HN79", "location": "Dublin 4", "handler": "Diana", "status": "won", "_quoteVal": 6260.0, "_type": "Main Bathroom", "_jobStatus": "awaiting-schedule", "id": "bkd011x", "createdBy": "arthur", "createdAt": "2026-02-01T10:00:00.000Z"}, {"name": "Yetty", "phone": "089 212 7815", "email": "", "address": "31 Ardlo Manor, Mullagh, Co. Cavan", "eircode": "A82 R728", "location": "Mullagh, Cavan", "handler": "Diana", "status": "won", "_quoteVal": 12910.72, "_type": "Main Bathroom", "_jobStatus": "awaiting-schedule", "id": "bkd012x", "createdBy": "arthur", "createdAt": "2026-02-01T10:00:00.000Z"}, {"name": "Brian Forde", "phone": "087 950 9527", "email": "forderoofing@gmail.com", "address": "Meath", "eircode": "", "location": "Meath", "handler": "Diana", "status": "new", "_quoteVal": 0, "_type": "Main Bathroom", "_jobStatus": "pipeline", "id": "led001x", "createdBy": "arthur", "createdAt": "2026-03-01T10:00:00.000Z"}, {"name": "Christian McGuirk", "phone": "086 397 6067", "email": "christian.mcguirk@gmail.com", "address": "Meath", "eircode": "", "location": "Meath", "handler": "Diana", "status": "warm", "_quoteVal": 0, "_type": "Ensuite", "_jobStatus": "pipeline", "id": "led002x", "createdBy": "arthur", "createdAt": "2026-03-01T10:00:00.000Z"}, {"name": "Juliet Phillips", "phone": "086 305 3777", "email": "julietmadden@hotmail.com", "address": "Meath", "eircode": "", "location": "Meath", "handler": "Diana", "status": "warm", "_quoteVal": 0, "_type": "Main Bathroom", "_jobStatus": "pipeline", "id": "led003x", "createdBy": "arthur", "createdAt": "2026-03-01T10:00:00.000Z"}, {"name": "Darragh Gillespie", "phone": "087 930 3054", "email": "gillespiedarragh@gmail.com", "address": "Dublin West", "eircode": "", "location": "Dublin West", "handler": "Diana", "status": "new", "_quoteVal": 0, "_type": "Main Bathroom", "_jobStatus": "pipeline", "id": "led004x", "createdBy": "arthur", "createdAt": "2026-03-01T10:00:00.000Z"}, {"name": "Karen Rattigan", "phone": "085 169 2661", "email": "karenrattigan7@gmail.com", "address": "Meath", "eircode": "", "location": "Meath", "handler": "Diana", "status": "new", "_quoteVal": 0, "_type": "Main Bathroom", "_jobStatus": "pipeline", "id": "led005x", "createdBy": "arthur", "createdAt": "2026-03-01T10:00:00.000Z"}, {"name": "Fergus Shields", "phone": "083 356 8264", "email": "fergshields@gmail.com", "address": "Kells, Meath", "eircode": "", "location": "Kells, Meath", "handler": "Diana", "status": "warm", "_quoteVal": 0, "_type": "Multiple Rooms", "_jobStatus": "pipeline", "id": "led006x", "createdBy": "arthur", "createdAt": "2026-03-01T10:00:00.000Z"}, {"name": "Aisling Greene", "phone": "083 487 8611", "email": "aisling.m.greene@gmail.com", "address": "Other", "eircode": "", "location": "Dublin", "handler": "Diana", "status": "new", "_quoteVal": 0, "_type": "Main Bathroom", "_jobStatus": "pipeline", "id": "led007x", "createdBy": "arthur", "createdAt": "2026-03-01T10:00:00.000Z"}, {"name": "Sami Hamid", "phone": "085 114 1970", "email": "shamid2795@gmail.com", "address": "Clara", "eircode": "", "location": "Clara", "handler": "Diana", "status": "new", "_quoteVal": 0, "_type": "Main Bathroom", "_jobStatus": "pipeline", "id": "led008x", "createdBy": "arthur", "createdAt": "2026-03-01T10:00:00.000Z"}, {"name": "Dearbhla Kerr", "phone": "086 402 1943", "email": "dearbhlakerr1@gmail.com", "address": "Louth", "eircode": "", "location": "Louth", "handler": "Diana", "status": "new", "_quoteVal": 0, "_type": "Ensuite", "_jobStatus": "pipeline", "id": "led009x", "createdBy": "arthur", "createdAt": "2026-03-01T10:00:00.000Z"}, {"name": "Bernie McCullagh", "phone": "085 230 9337", "email": "bernie.martin18@yahoo.com", "address": "Kingscourt, Co. Cavan", "eircode": "", "location": "Kingscourt, Cavan", "handler": "Diana", "status": "new", "_quoteVal": 0, "_type": "Multiple Rooms", "_jobStatus": "pipeline", "id": "led010x", "createdBy": "arthur", "createdAt": "2026-03-01T10:00:00.000Z"}, {"name": "Fernando Jalea", "phone": "087 247 6188", "email": "fernan414@yahoo.com", "address": "Dublin West", "eircode": "", "location": "Dublin West", "handler": "Diana", "status": "new", "_quoteVal": 0, "_type": "Main Bathroom", "_jobStatus": "pipeline", "id": "led011x", "createdBy": "arthur", "createdAt": "2026-03-01T10:00:00.000Z"}, {"name": "Shaun Hayes", "phone": "085 231 2203", "email": "shaunhayes7@outlook.ie", "address": "Dublin West", "eircode": "", "location": "Dublin West", "handler": "Diana", "status": "new", "_quoteVal": 0, "_type": "Main Bathroom", "_jobStatus": "pipeline", "id": "led012x", "createdBy": "arthur", "createdAt": "2026-03-01T10:00:00.000Z"}, {"name": "Karen Mertig", "phone": "087 737 8778", "email": "karenmertig@hotmail.com", "address": "Dublin 4", "eircode": "", "location": "Dublin 4", "handler": "Diana", "status": "warm", "_quoteVal": 0, "_type": "Ensuite", "_jobStatus": "pipeline", "id": "led013x", "createdBy": "arthur", "createdAt": "2026-03-01T10:00:00.000Z"}, {"name": "Kayleigh Mulvany", "phone": "089 443 9215", "email": "kayleighmulvany@outlook.ie", "address": "Dublin", "eircode": "", "location": "Dublin", "handler": "Diana", "status": "new", "_quoteVal": 0, "_type": "Main Bathroom", "_jobStatus": "pipeline", "id": "led014x", "createdBy": "arthur", "createdAt": "2026-03-01T10:00:00.000Z"}, {"name": "Niall Mooney", "phone": "086 126 1831", "email": "niallmooney1972@outlook.com", "address": "Louth", "eircode": "", "location": "Louth", "handler": "Diana", "status": "new", "_quoteVal": 0, "_type": "Main Bathroom", "_jobStatus": "pipeline", "id": "led015x", "createdBy": "arthur", "createdAt": "2026-03-01T10:00:00.000Z"}, {"name": "Saundra Parkes", "phone": "083 851 3867", "email": "saundraparkes@gmail.com", "address": "Meath", "eircode": "", "location": "Meath", "handler": "Diana", "status": "new", "_quoteVal": 0, "_type": "Multiple Rooms", "_jobStatus": "pipeline", "id": "led016x", "createdBy": "arthur", "createdAt": "2026-03-01T10:00:00.000Z"}, {"name": "Emma Gill", "phone": "", "email": "gillemma136@gmail.com", "address": "Meath", "eircode": "", "location": "Meath", "handler": "Diana", "status": "new", "_quoteVal": 0, "_type": "Main Bathroom", "_jobStatus": "pipeline", "id": "led017x", "createdBy": "arthur", "createdAt": "2026-03-01T10:00:00.000Z"}];
+const PRELOADED_JOBS    = [{"id": "jcmp001x", "clientId": "cmp001x", "clientName": "Karyn Leek", "location": "Navan, Meath", "type": "Bathroom", "handler": "Diana", "value": 6296.2, "status": "complete", "startDate": null, "duration": 10, "team": null, "notes": null, "p1": {"amount": 3148.1, "paid": true, "paidDate": "2026-02-01"}, "p2": {"amount": 1574.05, "paid": true, "paidDate": "2026-03-01"}, "p3": {"amount": 1574.05, "paid": true, "paidDate": "2026-04-01"}, "touchpoints": {"preStart": {"label": "Pre-start confirmation", "done": true, "doneDate": null}, "p2reminder": {"label": "P2 payment reminder", "done": true, "doneDate": null}, "completion": {"label": "Completion message", "done": true, "doneDate": null}, "followUp": {"label": "Follow-up check-in", "done": true, "doneDate": null}, "review": {"label": "Review request", "done": false, "doneDate": null}}}, {"id": "jcmp002x", "clientId": "cmp002x", "clientName": "Noel", "location": "Navan, Meath", "type": "Downstairs WC", "handler": "Diana", "value": 6342.56, "status": "complete", "startDate": null, "duration": 10, "team": null, "notes": null, "p1": {"amount": 3171.28, "paid": true, "paidDate": "2026-02-01"}, "p2": {"amount": 1585.64, "paid": true, "paidDate": "2026-03-01"}, "p3": {"amount": 1585.64, "paid": true, "paidDate": "2026-04-01"}, "touchpoints": {"preStart": {"label": "Pre-start confirmation", "done": true, "doneDate": null}, "p2reminder": {"label": "P2 payment reminder", "done": true, "doneDate": null}, "completion": {"label": "Completion message", "done": true, "doneDate": null}, "followUp": {"label": "Follow-up check-in", "done": true, "doneDate": null}, "review": {"label": "Review request", "done": false, "doneDate": null}}}, {"id": "jcmp003x", "clientId": "cmp003x", "clientName": "Martin Foley", "location": "Navan, Meath", "type": "Main Bathroom + Ensuite", "handler": "Diana", "value": 12228.69, "status": "complete", "startDate": null, "duration": 10, "team": null, "notes": null, "p1": {"amount": 6114.35, "paid": true, "paidDate": "2026-02-01"}, "p2": {"amount": 3057.17, "paid": true, "paidDate": "2026-03-01"}, "p3": {"amount": 3057.17, "paid": true, "paidDate": "2026-04-01"}, "touchpoints": {"preStart": {"label": "Pre-start confirmation", "done": true, "doneDate": null}, "p2reminder": {"label": "P2 payment reminder", "done": true, "doneDate": null}, "completion": {"label": "Completion message", "done": true, "doneDate": null}, "followUp": {"label": "Follow-up check-in", "done": true, "doneDate": null}, "review": {"label": "Review request", "done": false, "doneDate": null}}}, {"id": "jcmp004x", "clientId": "cmp004x", "clientName": "Derek", "location": "Navan, Meath", "type": "Main Bathroom", "handler": "Diana", "value": 7019.93, "status": "complete", "startDate": null, "duration": 10, "team": null, "notes": null, "p1": {"amount": 3509.97, "paid": true, "paidDate": "2026-02-01"}, "p2": {"amount": 1754.98, "paid": true, "paidDate": "2026-03-01"}, "p3": {"amount": 1754.98, "paid": true, "paidDate": "2026-04-01"}, "touchpoints": {"preStart": {"label": "Pre-start confirmation", "done": true, "doneDate": null}, "p2reminder": {"label": "P2 payment reminder", "done": true, "doneDate": null}, "completion": {"label": "Completion message", "done": true, "doneDate": null}, "followUp": {"label": "Follow-up check-in", "done": true, "doneDate": null}, "review": {"label": "Review request", "done": false, "doneDate": null}}}, {"id": "jcmp005x", "clientId": "cmp005x", "clientName": "Funmi", "location": "Balbriggan, Dublin", "type": "Main Bathroom", "handler": "Diana", "value": 3385.0, "status": "complete", "startDate": null, "duration": 10, "team": null, "notes": null, "p1": {"amount": 1692.5, "paid": true, "paidDate": "2026-02-01"}, "p2": {"amount": 846.25, "paid": true, "paidDate": "2026-03-01"}, "p3": {"amount": 846.25, "paid": true, "paidDate": "2026-04-01"}, "touchpoints": {"preStart": {"label": "Pre-start confirmation", "done": true, "doneDate": null}, "p2reminder": {"label": "P2 payment reminder", "done": true, "doneDate": null}, "completion": {"label": "Completion message", "done": true, "doneDate": null}, "followUp": {"label": "Follow-up check-in", "done": true, "doneDate": null}, "review": {"label": "Review request", "done": false, "doneDate": null}}}, {"id": "jcmp006x", "clientId": "cmp006x", "clientName": "Craig Blackwell", "location": "Trim, Meath", "type": "Bathroom Tiling", "handler": "Diana", "value": 5700.0, "status": "complete", "startDate": null, "duration": 10, "team": null, "notes": null, "p1": {"amount": 2850.0, "paid": true, "paidDate": "2026-02-01"}, "p2": {"amount": 1425.0, "paid": true, "paidDate": "2026-03-01"}, "p3": {"amount": 1425.0, "paid": true, "paidDate": "2026-04-01"}, "touchpoints": {"preStart": {"label": "Pre-start confirmation", "done": true, "doneDate": null}, "p2reminder": {"label": "P2 payment reminder", "done": true, "doneDate": null}, "completion": {"label": "Completion message", "done": true, "doneDate": null}, "followUp": {"label": "Follow-up check-in", "done": true, "doneDate": null}, "review": {"label": "Review request", "done": false, "doneDate": null}}}, {"id": "jbkd001x", "clientId": "bkd001x", "clientName": "Aine Rooney", "location": "Ardee, Louth", "type": "Main Bathroom", "handler": "Diana", "value": 13986.42, "status": "awaiting-schedule", "startDate": null, "duration": 10, "team": null, "notes": null, "p1": {"amount": 6993.21, "paid": true, "paidDate": "2026-02-01"}, "p2": {"amount": 3496.61, "paid": false, "paidDate": null}, "p3": {"amount": 3496.61, "paid": false, "paidDate": null}, "touchpoints": {"preStart": {"label": "Pre-start confirmation", "done": false, "doneDate": null}, "p2reminder": {"label": "P2 payment reminder", "done": false, "doneDate": null}, "completion": {"label": "Completion message", "done": false, "doneDate": null}, "followUp": {"label": "Follow-up check-in", "done": false, "doneDate": null}, "review": {"label": "Review request", "done": false, "doneDate": null}}}, {"id": "jbkd002x", "clientId": "bkd002x", "clientName": "Aine Maher", "location": "Lucan, Dublin", "type": "Main Bathroom", "handler": "Diana", "value": 17553.42, "status": "awaiting-schedule", "startDate": null, "duration": 10, "team": null, "notes": null, "p1": {"amount": 8776.71, "paid": true, "paidDate": "2026-02-01"}, "p2": {"amount": 4388.35, "paid": false, "paidDate": null}, "p3": {"amount": 4388.35, "paid": false, "paidDate": null}, "touchpoints": {"preStart": {"label": "Pre-start confirmation", "done": false, "doneDate": null}, "p2reminder": {"label": "P2 payment reminder", "done": false, "doneDate": null}, "completion": {"label": "Completion message", "done": false, "doneDate": null}, "followUp": {"label": "Follow-up check-in", "done": false, "doneDate": null}, "review": {"label": "Review request", "done": false, "doneDate": null}}}, {"id": "jbkd003x", "clientId": "bkd003x", "clientName": "Caroline", "location": "Navan, Meath", "type": "Main Bathroom", "handler": "Diana", "value": 7052.0, "status": "awaiting-schedule", "startDate": null, "duration": 10, "team": null, "notes": null, "p1": {"amount": 3526.0, "paid": true, "paidDate": "2026-02-01"}, "p2": {"amount": 1763.0, "paid": false, "paidDate": null}, "p3": {"amount": 1763.0, "paid": false, "paidDate": null}, "touchpoints": {"preStart": {"label": "Pre-start confirmation", "done": false, "doneDate": null}, "p2reminder": {"label": "P2 payment reminder", "done": false, "doneDate": null}, "completion": {"label": "Completion message", "done": false, "doneDate": null}, "followUp": {"label": "Follow-up check-in", "done": false, "doneDate": null}, "review": {"label": "Review request", "done": false, "doneDate": null}}}, {"id": "jbkd004x", "clientId": "bkd004x", "clientName": "Eimear", "location": "Trim, Meath", "type": "Main Bathroom + WC", "handler": "Diana", "value": 12937.0, "status": "awaiting-schedule", "startDate": null, "duration": 10, "team": null, "notes": null, "p1": {"amount": 6468.5, "paid": true, "paidDate": "2026-02-01"}, "p2": {"amount": 3234.25, "paid": false, "paidDate": null}, "p3": {"amount": 3234.25, "paid": false, "paidDate": null}, "touchpoints": {"preStart": {"label": "Pre-start confirmation", "done": false, "doneDate": null}, "p2reminder": {"label": "P2 payment reminder", "done": false, "doneDate": null}, "completion": {"label": "Completion message", "done": false, "doneDate": null}, "followUp": {"label": "Follow-up check-in", "done": false, "doneDate": null}, "review": {"label": "Review request", "done": false, "doneDate": null}}}, {"id": "jbkd005x", "clientId": "bkd005x", "clientName": "Felina & JB", "location": "Dublin 15", "type": "3 Rooms", "handler": "Diana", "value": 31553.67, "status": "awaiting-schedule", "startDate": null, "duration": 10, "team": null, "notes": null, "p1": {"amount": 15776.83, "paid": true, "paidDate": "2026-02-01"}, "p2": {"amount": 7888.42, "paid": false, "paidDate": null}, "p3": {"amount": 7888.42, "paid": false, "paidDate": null}, "touchpoints": {"preStart": {"label": "Pre-start confirmation", "done": false, "doneDate": null}, "p2reminder": {"label": "P2 payment reminder", "done": false, "doneDate": null}, "completion": {"label": "Completion message", "done": false, "doneDate": null}, "followUp": {"label": "Follow-up check-in", "done": false, "doneDate": null}, "review": {"label": "Review request", "done": false, "doneDate": null}}}, {"id": "jbkd006x", "clientId": "bkd006x", "clientName": "Gillian", "location": "Ashbourne, Meath", "type": "Main Bathroom + Ensuite", "handler": "Diana", "value": 23560.54, "status": "awaiting-schedule", "startDate": null, "duration": 10, "team": null, "notes": null, "p1": {"amount": 11780.27, "paid": true, "paidDate": "2026-02-01"}, "p2": {"amount": 5890.14, "paid": false, "paidDate": null}, "p3": {"amount": 5890.14, "paid": false, "paidDate": null}, "touchpoints": {"preStart": {"label": "Pre-start confirmation", "done": false, "doneDate": null}, "p2reminder": {"label": "P2 payment reminder", "done": false, "doneDate": null}, "completion": {"label": "Completion message", "done": false, "doneDate": null}, "followUp": {"label": "Follow-up check-in", "done": false, "doneDate": null}, "review": {"label": "Review request", "done": false, "doneDate": null}}}, {"id": "jbkd007x", "clientId": "bkd007x", "clientName": "John Goodwin", "location": "Dundalk, Louth", "type": "Main Bathroom", "handler": "Diana", "value": 4500.0, "status": "awaiting-schedule", "startDate": null, "duration": 10, "team": null, "notes": null, "p1": {"amount": 2250.0, "paid": true, "paidDate": "2026-02-01"}, "p2": {"amount": 1125.0, "paid": false, "paidDate": null}, "p3": {"amount": 1125.0, "paid": false, "paidDate": null}, "touchpoints": {"preStart": {"label": "Pre-start confirmation", "done": false, "doneDate": null}, "p2reminder": {"label": "P2 payment reminder", "done": false, "doneDate": null}, "completion": {"label": "Completion message", "done": false, "doneDate": null}, "followUp": {"label": "Follow-up check-in", "done": false, "doneDate": null}, "review": {"label": "Review request", "done": false, "doneDate": null}}}, {"id": "jbkd008x", "clientId": "bkd008x", "clientName": "Stephen Bohan", "location": "Castlepollard, Westmeath", "type": "Multiple Bathrooms", "handler": "Diana", "value": 22207.0, "status": "awaiting-schedule", "startDate": null, "duration": 10, "team": null, "notes": null, "p1": {"amount": 11103.5, "paid": true, "paidDate": "2026-02-01"}, "p2": {"amount": 5551.75, "paid": false, "paidDate": null}, "p3": {"amount": 5551.75, "paid": false, "paidDate": null}, "touchpoints": {"preStart": {"label": "Pre-start confirmation", "done": false, "doneDate": null}, "p2reminder": {"label": "P2 payment reminder", "done": false, "doneDate": null}, "completion": {"label": "Completion message", "done": false, "doneDate": null}, "followUp": {"label": "Follow-up check-in", "done": false, "doneDate": null}, "review": {"label": "Review request", "done": false, "doneDate": null}}}, {"id": "jbkd009x", "clientId": "bkd009x", "clientName": "Tiernan Butler", "location": "Dundrum, Dublin", "type": "Ensuite", "handler": "Diana", "value": 10484.0, "status": "awaiting-schedule", "startDate": null, "duration": 10, "team": null, "notes": null, "p1": {"amount": 5242.0, "paid": true, "paidDate": "2026-02-01"}, "p2": {"amount": 2621.0, "paid": false, "paidDate": null}, "p3": {"amount": 2621.0, "paid": false, "paidDate": null}, "touchpoints": {"preStart": {"label": "Pre-start confirmation", "done": false, "doneDate": null}, "p2reminder": {"label": "P2 payment reminder", "done": false, "doneDate": null}, "completion": {"label": "Completion message", "done": false, "doneDate": null}, "followUp": {"label": "Follow-up check-in", "done": false, "doneDate": null}, "review": {"label": "Review request", "done": false, "doneDate": null}}}, {"id": "jbkd010x", "clientId": "bkd010x", "clientName": "Jane Donegan", "location": "Kilbride, Meath", "type": "Main Bathroom", "handler": "Diana", "value": 8531.0, "status": "awaiting-schedule", "startDate": null, "duration": 10, "team": null, "notes": null, "p1": {"amount": 4265.5, "paid": true, "paidDate": "2026-02-01"}, "p2": {"amount": 2132.75, "paid": false, "paidDate": null}, "p3": {"amount": 2132.75, "paid": false, "paidDate": null}, "touchpoints": {"preStart": {"label": "Pre-start confirmation", "done": false, "doneDate": null}, "p2reminder": {"label": "P2 payment reminder", "done": false, "doneDate": null}, "completion": {"label": "Completion message", "done": false, "doneDate": null}, "followUp": {"label": "Follow-up check-in", "done": false, "doneDate": null}, "review": {"label": "Review request", "done": false, "doneDate": null}}}, {"id": "jbkd011x", "clientId": "bkd011x", "clientName": "Mary O'Dowd", "location": "Dublin 4", "type": "Main Bathroom", "handler": "Diana", "value": 6260.0, "status": "awaiting-schedule", "startDate": null, "duration": 10, "team": null, "notes": null, "p1": {"amount": 3130.0, "paid": true, "paidDate": "2026-02-01"}, "p2": {"amount": 1565.0, "paid": false, "paidDate": null}, "p3": {"amount": 1565.0, "paid": false, "paidDate": null}, "touchpoints": {"preStart": {"label": "Pre-start confirmation", "done": false, "doneDate": null}, "p2reminder": {"label": "P2 payment reminder", "done": false, "doneDate": null}, "completion": {"label": "Completion message", "done": false, "doneDate": null}, "followUp": {"label": "Follow-up check-in", "done": false, "doneDate": null}, "review": {"label": "Review request", "done": false, "doneDate": null}}}, {"id": "jbkd012x", "clientId": "bkd012x", "clientName": "Yetty", "location": "Mullagh, Cavan", "type": "Main Bathroom", "handler": "Diana", "value": 12910.72, "status": "awaiting-schedule", "startDate": null, "duration": 10, "team": null, "notes": null, "p1": {"amount": 6455.36, "paid": true, "paidDate": "2026-02-01"}, "p2": {"amount": 3227.68, "paid": false, "paidDate": null}, "p3": {"amount": 3227.68, "paid": false, "paidDate": null}, "touchpoints": {"preStart": {"label": "Pre-start confirmation", "done": false, "doneDate": null}, "p2reminder": {"label": "P2 payment reminder", "done": false, "doneDate": null}, "completion": {"label": "Completion message", "done": false, "doneDate": null}, "followUp": {"label": "Follow-up check-in", "done": false, "doneDate": null}, "review": {"label": "Review request", "done": false, "doneDate": null}}}];
+
 </script>
 </body>
 </html>
