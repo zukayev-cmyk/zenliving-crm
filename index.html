@@ -528,7 +528,13 @@ tr:last-child td{border-bottom:none}
             <button class="cal-nb" onclick="calNext()">Next →</button>
           </div>
         </div>
-        <div class="cal-grid" id="calGrid"></div>
+        <div style="display:flex;gap:16px;margin-bottom:10px;flex-wrap:wrap">
+        <div style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--ink3)"><span style="width:10px;height:10px;border-radius:2px;background:rgba(74,122,154,.85);display:inline-block"></span>Team 1</div>
+        <div style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--ink3)"><span style="width:10px;height:10px;border-radius:2px;background:rgba(90,138,106,.85);display:inline-block"></span>Team 2</div>
+        <div style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--ink3)"><span style="width:10px;height:10px;border-radius:2px;background:rgba(196,113,74,.85);display:inline-block"></span>Team 3</div>
+        <div style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--ink3)"><span style="width:10px;height:10px;border-radius:2px;background:rgba(122,106,170,.5);display:inline-block"></span>Unassigned</div>
+      </div>
+      <div class="cal-grid" id="calGrid"></div>
       </div>
       <div class="cal-legend">
         <div class="cal-leg-item"><div class="cal-leg-dot" style="background:#5a8a6a"></div>Active job</div>
@@ -587,7 +593,14 @@ tr:last-child td{border-bottom:none}
       <div class="f-group"><div class="f-label">Duration (working days)</div><input class="fi" type="number" id="s-duration" value="10" min="1" max="60"></div>
     </div>
     <div class="fg2">
-      <div class="f-group"><div class="f-label">Assigned team</div><input class="fi" id="s-team" placeholder="e.g. Arthur + Huan"></div>
+      <div class="f-group"><div class="f-label">Assigned team</div>
+        <select class="fi" id="s-team">
+          <option value="">Unassigned</option>
+          <option value="Team 1">Team 1</option>
+          <option value="Team 2">Team 2</option>
+          <option value="Team 3">Team 3</option>
+        </select>
+      </div>
       <div class="f-group"><div class="f-label">Notes</div><input class="fi" id="s-notes" placeholder="Any scheduling notes…"></div>
     </div>
     <div class="f-group">
@@ -653,6 +666,7 @@ let activeRoomId   = null;
 let qMode = 'supply';
 let qVatOn = false;
 let saveTimer = null;
+let noteTimers = {};
 let editingClientId = null;
 let schedulingJobId = null;
 let calYear = new Date().getFullYear();
@@ -932,9 +946,15 @@ function renderClients() {
           <div class="d-field"><div class="d-label">Handler</div><div class="d-val">${handler.name}</div></div>
           <div class="d-field"><div class="d-label">Status</div><div class="d-val">${statusBadge(c.status)}</div></div>
         </div>
+        <div style="margin-top:12px">
+          <div class="d-label" style="margin-bottom:6px">Notes</div>
+          <textarea id="notes-${c.id}" rows="4" style="width:100%;background:var(--stone3);border:1px solid var(--rule);border-radius:var(--r);color:var(--ink);font-family:var(--fb);font-size:12px;padding:8px;resize:vertical;line-height:1.6" placeholder="Add notes after calls, site visits…" oninput="scheduleNoteSave('${c.id}')">${c._notes||''}</textarea>
+          <div style="font-size:10px;color:var(--ink4);margin-top:3px" id="note-status-${c.id}"></div>
+        </div>
         <div class="c-footer">
           <button class="btn sm" onclick="editClient('${c.id}')">Edit details</button>
           <button class="btn sm danger" onclick="openLossModal('${c.id}')">Mark lost</button>
+          ${c.status==='won'&&jobForClient?`<button class="btn sm" style="border-color:rgba(74,122,154,.35);color:#8ab8d8" onclick="openSched('${jobForClient.id}')">${jobForClient.startDate?'📅 Reschedule':'📅 Schedule'}</button>`:''}
           <button class="btn sm primary" onclick="openQuote('${c.id}')">
             ${c._quoteVal?'Edit quote →':'Create quote →'}
           </button>
@@ -1655,6 +1675,12 @@ async function importLead(idx) {
     _timeline: l.timeline || '',
     _message:  l.message || '',
     _submittedOn: l.submittedOn || '',
+    _notes: [
+      l.submittedOn ? `[${l.submittedOn}] Initial enquiry via website:` : 'Initial enquiry via website:',
+      l.message ? l.message : '(no message left)',
+      l.budget ? `Budget: ${l.budget}` : '',
+      l.timeline ? `Timeline: ${l.timeline}` : '',
+    ].filter(Boolean).join('\n'),
   };
 
   // Save client to CRM
@@ -2047,10 +2073,12 @@ function renderCal(){
     html+=`<div class="cal-day ${other?'other':''} ${isToday?'today':''} ${dayJobs.length?'has-jobs':''}">
       <span class="cal-num">${dt.getDate()}</span>
       ${dayJobs.map(j=>{
-        const col=j.status==='complete'?'rgba(122,106,170,.6)':j.p2?.paid?'rgba(196,113,74,.7)':'rgba(90,138,106,.7)';
+        const teamCols={'Team 1':'rgba(74,122,154,.85)','Team 2':'rgba(90,138,106,.85)','Team 3':'rgba(196,113,74,.85)'};
+        const col = j.team && teamCols[j.team] ? teamCols[j.team] : 'rgba(122,106,170,.5)';
+        const teamTag = j.team ? `<span style="font-size:9px;opacity:.75;margin-left:3px">${j.team.replace('Team ','T')}</span>` : '';
         return `<div class="cal-pill" style="background:${col};color:#f0e8d8"
           onclick="goPage('jobs');setTimeout(()=>toggleJ('${j.id}'),200)"
-          title="${j.clientName}">${j.startDate===ds?'▶ ':''}${j.clientName.split(' ')[0]}</div>`;
+          title="${j.clientName}${j.team?' · '+j.team:''}">${j.startDate===ds?'▶ ':''}${j.clientName.split(' ')[0]}${teamTag}</div>`;
       }).join('')}
     </div>`;
   }
@@ -2058,6 +2086,22 @@ function renderCal(){
 }
 
 // ── PASSWORDS ──────────────────────────────
+// ── Client notes auto-save ──────────────────────────────
+function scheduleNoteSave(clientId) {
+  const el = $('notes-'+clientId);
+  if(!el) return;
+  const statusEl = $('note-status-'+clientId);
+  if(statusEl) statusEl.textContent = 'Unsaved…';
+  clearTimeout(noteTimers[clientId]);
+  noteTimers[clientId] = setTimeout(async () => {
+    const c = clients.find(x=>x.id===clientId);
+    if(!c) return;
+    c._notes = el.value;
+    await api('saveClient',{},{client:c});
+    if(statusEl) { statusEl.textContent = 'Saved ✓'; setTimeout(()=>{ if(statusEl) statusEl.textContent=''; },2000); }
+  }, 1000);
+}
+
 const PINS = {arthur:'7222', diana:'2580', huan:'7531'};
 let pendingUser = null;
 let currentPin = '';
