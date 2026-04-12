@@ -803,10 +803,12 @@ function goPage(p) {
 // LOAD ALL DATA
 // ═══════════════════════════════════════════════════════
 async function loadAll() {
-  // First load remote data
+  // Arthur is admin — loads everything with no filter
+  // Diana/Huan only load their own records
+  const isAdmin = currentUser === 'arthur';
   const [cls, jbs] = await Promise.all([
-    api('getClients', {handler:currentUser}),
-    api('getJobs',    {handler:currentUser}),
+    api('getClients', isAdmin ? {} : {handler:currentUser}),
+    api('getJobs',    isAdmin ? {} : {handler:currentUser}),
   ]);
   
   // If remote is empty, seed with preloaded data
@@ -830,9 +832,8 @@ async function loadAll() {
     jobs = jbs;
   }
   
-  // Filter for non-admin users
-  // Jobs are matched by either their stored handler OR their linked client's current handler
-  // This means if Diana's client is reassigned to Huan, Huan sees it immediately
+  // Arthur = admin, sees everything. Diana/Huan see only their assigned records.
+  // Jobs matched by stored handler OR linked client's current handler (handles reassignments).
   if (currentUser !== 'arthur') {
     clients = clients.filter(c =>
       (c.handler||'').toLowerCase() === currentUser ||
