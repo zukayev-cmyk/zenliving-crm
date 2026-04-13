@@ -490,6 +490,52 @@ tr:last-child td{border-bottom:none}
     </div>
   </div>
 
+
+  <!-- ── INVOICE MODAL ── -->
+  <div class="modal-bg" id="invoiceModal" onclick="if(event.target===this)closeInvoiceModal()">
+    <div class="modal" onclick="event.stopPropagation()" style="max-width:440px">
+      <div class="modal-title">Export Invoice PDF</div>
+      <div class="modal-sub" id="invoiceClientName"></div>
+      <div class="fg2" style="margin-top:16px">
+        <div class="f-group">
+          <div class="f-label">Amount (incl. VAT) €</div>
+          <input class="fi" type="number" step="0.01" id="inv-amount" placeholder="e.g. 5755.43" oninput="calcInvoiceVat()">
+        </div>
+        <div class="f-group">
+          <div class="f-label">VAT rate %</div>
+          <select class="fi" id="inv-vat" onchange="calcInvoiceVat()">
+            <option value="0">No VAT (0%)</option>
+            <option value="13.5" selected>13.5%</option>
+            <option value="23">23%</option>
+          </select>
+        </div>
+      </div>
+      <div style="background:var(--stone3);border-radius:var(--r);padding:10px 12px;font-size:12px;margin-bottom:12px;display:flex;gap:20px" id="inv-vat-preview">
+        <span>Net: <b id="inv-net">—</b></span>
+        <span>VAT: <b id="inv-vat-amt">—</b></span>
+        <span>Total: <b id="inv-total">—</b></span>
+      </div>
+      <div class="f-group">
+        <div class="f-label">Invoice description</div>
+        <textarea class="fi" id="inv-desc" rows="3" placeholder="e.g. Acceptance deposit — Main Bathroom renovation&#10;31 Ardlo Manor, Mullagh, Co. Cavan" style="resize:vertical"></textarea>
+      </div>
+      <div class="fg2">
+        <div class="f-group">
+          <div class="f-label">Invoice date</div>
+          <input class="fi" type="date" id="inv-date">
+        </div>
+        <div class="f-group">
+          <div class="f-label">Invoice #</div>
+          <input class="fi" id="inv-ref" placeholder="e.g. ZL-2026-001">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" onclick="closeInvoiceModal()">Cancel</button>
+        <button class="btn primary" onclick="exportInvoicePDF()">Export Invoice PDF ↗</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ── QUOTE HISTORY MODAL ── -->
   <div class="modal-bg" id="qhModal" onclick="if(event.target===this)closeQHModal()">
     <div class="modal" onclick="event.stopPropagation()" style="max-width:480px">
@@ -533,7 +579,7 @@ tr:last-child td{border-bottom:none}
   <!-- ── CALENDAR ── -->
   <div class="page" id="page-cal">
     <div class="pw">
-      <div class="ph"><div><div class="pt">Job calendar</div><div class="ps">Scheduled start dates and active job durations</div></div></div>
+      <div class="ph"><div><div class="pt">Job calendar</div><div class="ps">Scheduled start dates and active job durations · Syncs automatically to Google Calendar</div></div></div>
       <div class="cal-wrap">
         <div class="cal-hdr">
           <div class="cal-title" id="calTitle"></div>
@@ -801,8 +847,9 @@ function statusBadge(s) {
 }
 
 function addWorkDays(ds, days) {
+  // Inclusive: start date = day 1, so add (days-1) more working days
   let dt=new Date(ds), added=0;
-  while(added<days){ dt.setDate(dt.getDate()+1); if(dt.getDay()!==0&&dt.getDay()!==6) added++; }
+  while(added<days-1){ dt.setDate(dt.getDate()+1); if(dt.getDay()!==0&&dt.getDay()!==6) added++; }
   return dt.toISOString().slice(0,10);
 }
 function jobEnd(j){ return j.startDate&&j.duration?addWorkDays(j.startDate,j.duration):null; }
@@ -911,7 +958,8 @@ function renderClients() {
     ? `All clients — ${clients.length} total`
     : `Your clients — ${clients.length} shown`;
 
-  const active     = clients.filter(c=>c.status!=='lost');
+  const active     = clients.filter(c=>c.status!=='lost'&&c.status!=='won');
+  const wonClients = clients.filter(c=>c.status==='won');
   const totalPipe  = active.reduce((s,c)=>s+(c._quoteVal||0),0);
   const won        = active.filter(c=>c.status==='won').length;
   const lostCount  = clients.filter(c=>c.status==='lost').length;
@@ -920,7 +968,7 @@ function renderClients() {
     <div class="kpi"><div class="kv">${active.length}</div><div class="kl">Active clients</div></div>
     <div class="kpi"><div class="kv">${active.filter(c=>c.status!=='won').length}</div><div class="kl">Pipeline</div></div>
     <div class="kpi"><div class="kv">${euros(totalPipe)}</div><div class="kl">Pipeline value</div></div>
-    <div class="kpi"><div class="kv">${won}</div><div class="kl">Won</div></div>
+    <div class="kpi" onclick="goPage('jobs')" style="cursor:pointer"><div class="kv" style="color:var(--ok)">${wonClients.length}</div><div class="kl">Won → Jobs ↗</div></div>
     ${lostCount?`<div class="kpi" onclick="goPage('archive')" style="cursor:pointer;opacity:.6"><div class="kv">${lostCount}</div><div class="kl">Archived →</div></div>`:''}
   `);
 
@@ -933,7 +981,7 @@ function renderClients() {
     return;
   }
 
-  const activeClients = clients.filter(c => c.status !== 'lost');
+  const activeClients = clients.filter(c => c.status !== 'lost' && c.status !== 'won');
   setEl('clientsList', activeClients.map(c=>{
     const handler = USERS[c.handler?.toLowerCase()]||{name:c.handler||'—'};
     const jobForClient = jobs.find(j=>j.clientId===c.id);
@@ -1542,6 +1590,139 @@ function exportPDF(){
 
 
 
+
+// ═══════════════════════════════════════════════════════
+// INVOICE PDF EXPORT
+// ═══════════════════════════════════════════════════════
+let invoiceJobId = null;
+
+function openInvoiceModal(jobId) {
+  invoiceJobId = jobId;
+  const j = jobs.find(x=>x.id===jobId);
+  const c = j ? clients.find(x=>x.id===j.clientId) : null;
+  $('invoiceClientName').textContent = j ? j.clientName : '';
+  $('inv-amount').value = '';
+  $('inv-vat').value = '13.5';
+  $('inv-desc').value = '';
+  $('inv-date').value = new Date().toISOString().slice(0,10);
+  // Auto-generate invoice ref
+  const ref = 'ZL-' + new Date().getFullYear() + '-' + String(Date.now()).slice(-4);
+  $('inv-ref').value = ref;
+  calcInvoiceVat();
+  $('invoiceModal').classList.add('on');
+}
+
+function closeInvoiceModal() { $('invoiceModal').classList.remove('on'); invoiceJobId = null; }
+
+function calcInvoiceVat() {
+  const total = parseFloat($('inv-amount').value)||0;
+  const vatRate = parseFloat($('inv-vat').value)||0;
+  const net = vatRate > 0 ? total / (1 + vatRate/100) : total;
+  const vat = total - net;
+  $('inv-net').textContent = euros(net);
+  $('inv-vat-amt').textContent = euros(vat);
+  $('inv-total').textContent = euros(total);
+}
+
+function exportInvoicePDF() {
+  const j = invoiceJobId ? jobs.find(x=>x.id===invoiceJobId) : null;
+  const c = j ? clients.find(x=>x.id===j.clientId) : null;
+  const total = parseFloat($('inv-amount').value)||0;
+  if(!total) { alert('Please enter an amount.'); return; }
+  const vatRate = parseFloat($('inv-vat').value)||0;
+  const net = vatRate > 0 ? total / (1 + vatRate/100) : total;
+  const vat = total - net;
+  const desc = $('inv-desc').value.trim() || 'Renovation services';
+  const invDate = $('inv-date').value || new Date().toISOString().slice(0,10);
+  const invRef = $('inv-ref').value.trim() || 'ZL-' + Date.now();
+  const fmtEur = n => '€' + Number(n).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g,',');
+  const fmtD = ds => { const d=new Date(ds+'T00:00:00'); return d.toLocaleDateString('en-IE',{day:'numeric',month:'long',year:'numeric'}); };
+
+  const LOGO_B64 = document.querySelector('img[alt="Zen Living"]')?.src || '';
+
+  const win = window.open('','_blank');
+  win.document.write(\`<!DOCTYPE html><html><head>
+    <meta charset="utf-8"><title>Invoice \${invRef}</title>
+    <link href="https://fonts.googleapis.com/css2?family=Questrial&display=swap" rel="stylesheet">
+    <style>
+      *{box-sizing:border-box;margin:0;padding:0}
+      body{font-family:'Questrial',sans-serif;color:#1a1a1a;font-size:12px;padding:48px;max-width:860px;margin:0 auto}
+      .hdr{display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:12px;border-bottom:1px solid #ddd;margin-bottom:24px}
+      .inv-title{font-size:22px;font-weight:bold;color:#1a1a1a;letter-spacing:1px}
+      .inv-meta{text-align:right;font-size:11px;color:#666;line-height:1.8}
+      .client-box{margin-bottom:28px;padding-bottom:16px;border-bottom:1px solid #eee;display:flex;justify-content:space-between}
+      table{width:100%;border-collapse:collapse;margin-bottom:24px}
+      thead tr{border-bottom:1px solid #ddd}
+      th{text-align:left;padding:8px 0;font-size:10px;color:#999;text-transform:uppercase;letter-spacing:.07em;font-weight:normal}
+      td{padding:10px 0;border-bottom:1px solid #f0f0f0;font-size:12px}
+      .totals{margin-left:auto;width:260px}
+      .tot-row{display:flex;justify-content:space-between;padding:5px 0;font-size:12px;color:#555}
+      .tot-row.total{border-top:2px solid #1a1a1a;margin-top:6px;padding-top:10px;font-size:14px;font-weight:bold;color:#1a1a1a}
+      .bank{margin-top:32px;padding-top:16px;border-top:1px solid #eee;font-size:11px}
+      .bank h4{font-size:10px;text-transform:uppercase;letter-spacing:.07em;color:#999;margin-bottom:8px}
+      .bank table td{border:none;padding:4px 0;color:#555}
+      .bank table td:first-child{color:#999;width:120px}
+      .footer{position:fixed;bottom:0;left:0;right:0;text-align:center;font-size:10px;color:#aaa;padding:10px 48px;border-top:1px solid #eee;background:#fff}
+      .print-btn{margin-top:24px;padding:10px 28px;background:#1a1a1a;color:#fff;border:none;border-radius:3px;cursor:pointer;font-size:13px;font-family:'Questrial',sans-serif}
+      @media print{.print-btn{display:none}.footer{position:fixed;bottom:0}}
+    </style>
+  </head><body>
+    <div class="footer">info@zenliving.ie &nbsp;·&nbsp; www.zenliving.ie &nbsp;·&nbsp; 087 000 4272</div>
+    <div class="hdr">
+      \${LOGO_B64 ? \`<img src="\${LOGO_B64}" style="height:36px;width:auto">\` : '<span style="font-size:20px;font-weight:bold">ZEN LIVING</span>'}
+      <div class="inv-meta">
+        <div class="inv-title">INVOICE</div>
+        Invoice #: \${invRef}<br>
+        Date: \${fmtD(invDate)}
+      </div>
+    </div>
+    <div class="client-box">
+      <div>
+        <div style="font-weight:bold;font-size:13px;margin-bottom:4px">\${c?c.name:(j?j.clientName:'Client')}</div>
+        <div style="color:#555;line-height:1.7;font-size:11px">
+          \${c&&c.address?c.address+'<br>':''}
+          \${c&&c.eircode?c.eircode+' &nbsp;·&nbsp; ':''}
+          \${c&&c.phone?c.phone:''}
+        </div>
+      </div>
+      <div style="text-align:right;font-size:11px;color:#555">
+        Zen Living<br>
+        info@zenliving.ie<br>
+        087 000 4272
+      </div>
+    </div>
+    <table>
+      <thead><tr>
+        <th style="width:60%">Description</th>
+        <th style="text-align:right">Amount</th>
+        \${vatRate>0?'<th style="text-align:right">VAT '+vatRate+'%</th><th style="text-align:right">Total</th>':''}
+      </tr></thead>
+      <tbody><tr>
+        <td style="white-space:pre-wrap">\${desc}</td>
+        <td style="text-align:right">\${fmtEur(net)}</td>
+        \${vatRate>0?\`<td style="text-align:right">\${fmtEur(vat)}</td><td style="text-align:right;font-weight:bold">\${fmtEur(total)}</td>\`:''}
+      </tr></tbody>
+    </table>
+    <div class="totals">
+      \${vatRate>0?\`
+        <div class="tot-row"><span>Net amount</span><span>\${fmtEur(net)}</span></div>
+        <div class="tot-row"><span>VAT (\${vatRate}%)</span><span>\${fmtEur(vat)}</span></div>
+      \`:''}
+      <div class="tot-row total"><span>Total Due</span><span>\${fmtEur(total)}</span></div>
+    </div>
+    <div class="bank">
+      <h4>Payment Details</h4>
+      <table><tr><td>Account Name</td><td>ZEN TILING</td></tr>
+      <tr><td>IBAN</td><td>IE30 REVO 9903 6001 0390 66</td></tr>
+      <tr><td>BIC</td><td>REVOIE23</td></tr>
+      <tr><td>Reference</td><td>\${invRef}</td></tr></table>
+    </div>
+    <button class="print-btn" onclick="window.print()">Print / Save as PDF</button>
+  </body></html>\`);
+  win.document.close();
+  closeInvoiceModal();
+}
+
 // ═══════════════════════════════════════════════════════
 // QUOTE VERSION HISTORY
 // ═══════════════════════════════════════════════════════
@@ -1968,7 +2149,7 @@ async function restoreFromArchive(clientId, newStatus) {
 // JOBS PAGE
 // ═══════════════════════════════════════════════════════
 function renderJobs(){
-  const active=jobs.filter(j=>j.status!=='pipeline');
+  const active=jobs.filter(j=>j.status!=='pipeline'&&j.status!=='complete');
   const onSite=active.filter(j=>j.status==='active').length;
   const needSched=active.filter(j=>j.status==='awaiting-schedule').length;
   const complete=active.filter(j=>j.status==='complete').length;
@@ -2041,7 +2222,15 @@ function renderMs(j){
     return `<div class="ms ${paid?'paid':due?'due':''}">
       <div class="ms-num">Payment ${i+1}</div>
       <div class="ms-lbl">${p.label}</div>
-      <div class="ms-amt">${euros(p.data.amount)}</div>
+      <div class="ms-amt" style="display:flex;align-items:center;gap:6px">
+        ${paid
+          ? euros(p.data.amount)
+          : `<input type="number" step="0.01" value="${p.data.amount.toFixed(2)}"
+              style="width:90px;background:var(--stone3);border:1px solid var(--rule);border-radius:3px;color:var(--sand);font-family:var(--fm);font-size:13px;padding:2px 5px;text-align:right"
+              onchange="updatePaymentAmount('${j.id}','${p.key}',this.value)"
+              onclick="event.stopPropagation()">`
+        }
+      </div>
       <div class="ms-st"><span class="ms-d ${paid?'d-paid':due?'d-due':'d-pend'}"></span>
         <span style="font-size:11px;color:${paid?'var(--ok)':due?'var(--warn)':'var(--ink3)'}">
           ${paid?'Paid '+fmtDate(p.data.paidDate):due?'Due now':'Pending'}
@@ -2049,7 +2238,48 @@ function renderMs(j){
       </div>
       ${paid?'':`<button class="btn xs primary" onclick="markPaid('${j.id}','${p.key}')">Mark paid</button>`}
     </div>`;
-  }).join('')}</div>`;
+  }).join('')}</div>
+  <div style="display:flex;align-items:center;gap:10px;margin-top:10px;padding-top:10px;border-top:1px solid var(--rule2)">
+    <span style="font-size:11px;color:var(--ink3)">Job total:</span>
+    <input type="number" step="0.01" value="${j.value.toFixed(2)}"
+      style="width:110px;background:var(--stone3);border:1px solid var(--rule);border-radius:3px;color:var(--sand);font-family:var(--fm);font-size:13px;padding:2px 5px;text-align:right"
+      onchange="updateJobTotal('${j.id}',this.value)"
+      onclick="event.stopPropagation()">
+    <span style="font-size:10px;color:var(--ink4)">(editing recalculates unpaid instalments)</span>
+  </div>`;
+}
+
+async function updatePaymentAmount(jobId, payKey, val) {
+  const j = jobs.find(x=>x.id===jobId); if(!j) return;
+  const amount = parseFloat(val)||0;
+  j[payKey].amount = Math.round(amount*100)/100;
+  await api('saveJob',{},{job:j});
+  renderJobs();
+}
+
+async function updateJobTotal(jobId, val) {
+  const j = jobs.find(x=>x.id===jobId); if(!j) return;
+  const total = parseFloat(val)||0;
+  j.value = Math.round(total*100)/100;
+  // Recalculate unpaid instalments proportionally
+  const paid = [j.p1,j.p2,j.p3].filter(p=>p.paid).reduce((s,p)=>s+p.amount,0);
+  const remaining = Math.max(0, total - paid);
+  const unpaid = [j.p1,j.p2,j.p3].filter(p=>!p.paid);
+  if(unpaid.length===3) {
+    j.p1.amount = Math.round(total*0.5*100)/100;
+    j.p2.amount = Math.round(total*0.25*100)/100;
+    j.p3.amount = Math.round(total*0.25*100)/100;
+  } else if(unpaid.length===2) {
+    unpaid[0].amount = Math.round(remaining*0.5*100)/100;
+    unpaid[1].amount = Math.round(remaining*0.5*100)/100;
+  } else if(unpaid.length===1) {
+    unpaid[0].amount = Math.round(remaining*100)/100;
+  }
+  // Update linked client quote value
+  const c = clients.find(x=>x.id===j.clientId);
+  if(c) { c._quoteVal = total; await api('saveClient',{},{client:c}); }
+  await api('saveJob',{},{job:j});
+  renderJobs();
 }
 
 function renderSchedRow(j){
@@ -2103,6 +2333,10 @@ async function markPaid(jobId,payKey){
   await api('saveJob',{},{job:j});
   renderJobs(); setTimeout(()=>toggleJ(jobId),100);
   if(payKey==='p1'&&!j.startDate) setTimeout(()=>openSched(jobId),400);
+  // P3 paid = job complete — remove from Google Calendar
+  if(payKey==='p3') {
+    try { await api('syncCalendar',{},{job:j}); } catch(e) {}
+  }
 }
 
 async function toggleTP(jobId,tpKey){
@@ -2148,6 +2382,25 @@ async function confirmSched(){
   j.team=$('s-team').value; j.notes=$('s-notes').value; j.status='active';
   await api('saveJob',{},{job:j});
   closeSchedModal(); renderJobs();
+  // Sync to Google Calendar in background
+  syncJobCalendar(j);
+}
+
+async function syncJobCalendar(job) {
+  try {
+    const result = await api('syncCalendar', {}, {job});
+    if(result && result.eventId && result.eventId !== job._calEventId) {
+      job._calEventId = result.eventId;
+      await api('saveJob',{},{job});
+    }
+    if(result && result.ok) {
+      const action = result.action==='created'?'Added to':result.action==='updated'?'Updated in':'Synced with';
+      setBanner('ok', `${action} Google Calendar ✓`);
+      setTimeout(()=>setBanner(''), 3000);
+    }
+  } catch(e) {
+    console.warn('Google Calendar sync failed:', e);
+  }
 }
 
 // ─── Message Templates ──────────────────────────────────
