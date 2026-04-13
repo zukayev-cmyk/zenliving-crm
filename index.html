@@ -820,7 +820,7 @@ function localApi(action, params, body) {
 // ═══════════════════════════════════════════════════════
 const uid  = ()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6);
 const euros = n=>(!n||n===0)?'—':'€'+Number(n).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g,',');
-const fmtDate = d=>!d?'—':new Date(d).toLocaleDateString('en-IE',{day:'numeric',month:'short',year:'numeric'});
+const fmtDate = d => { if(!d) return '—'; const [y,m,day] = String(d).slice(0,10).split('-'); return `${day}/${m}/${y}`; };
 const inits = n=>(n||'?').split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
 const rt    = r=>(r.qty||0)*(r.unit||0);
 const esc   = s=>(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
@@ -847,13 +847,22 @@ function statusBadge(s) {
 }
 
 function addWorkDays(ds, days) {
-  // Inclusive: start date = day 1, so add (days-1) more working days
-  let dt=new Date(ds), added=0;
+  // Parse as LOCAL time to avoid UTC timezone shift
+  const [y,m,d] = ds.split('-').map(Number);
+  let dt = new Date(y, m-1, d); // local midnight
+  let added = 0;
   while(added<days-1){ dt.setDate(dt.getDate()+1); if(dt.getDay()!==0&&dt.getDay()!==6) added++; }
-  return dt.toISOString().slice(0,10);
+  return localDateStr(dt);
+}
+function localDateStr(dt) {
+  // Format date as YYYY-MM-DD in LOCAL time (not UTC)
+  const y = dt.getFullYear();
+  const m = String(dt.getMonth()+1).padStart(2,'0');
+  const d = String(dt.getDate()).padStart(2,'0');
+  return y+'-'+m+'-'+d;
 }
 function jobEnd(j){ return j.startDate&&j.duration?addWorkDays(j.startDate,j.duration):null; }
-function daysUntil(ds){ if(!ds)return null; return Math.round((new Date(ds)-new Date(new Date().toISOString().slice(0,10)))/(864e5)); }
+function daysUntil(ds){ if(!ds)return null; const [y,m,d]=ds.split('-').map(Number); const t=new Date(y,m-1,d); const now=new Date(); now.setHours(0,0,0,0); return Math.round((t-now)/864e5); }
 
 // ═══════════════════════════════════════════════════════
 // AUTH
@@ -2414,11 +2423,11 @@ function renderCal(){
   const first=new Date(calYear,calMonth,1); const last=new Date(calYear,calMonth+1,0);
   const startDow=(first.getDay()+6)%7;
   const total=Math.ceil((startDow+last.getDate())/7)*7;
-  const todayStr=new Date().toISOString().slice(0,10);
+  const todayStr=localDateStr(new Date());
   let html=DOWS.map(d=>`<div class="cal-dow">${d}</div>`).join('');
   for(let i=0;i<total;i++){
     const dt=new Date(calYear,calMonth,1+i-startDow);
-    const ds=dt.toISOString().slice(0,10);
+    const ds=localDateStr(dt);
     const isToday=ds===todayStr; const other=dt.getMonth()!==calMonth;
     const dayJobs=jobs.filter(j=>j.startDate&&jobOnDate(j,ds));
     html+=`<div class="cal-day ${other?'other':''} ${isToday?'today':''} ${dayJobs.length?'has-jobs':''}">
